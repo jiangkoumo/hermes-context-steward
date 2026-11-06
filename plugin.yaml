@@ -1,0 +1,11 @@
+name: context-steward
+version: "0.1.0"
+description: "One auxiliary judgment chooses a safe checkpoint or a fresh context segment in the same chat."
+author: jiangkoumo
+requires_hermes: ">=0.23.0"
+tags: [context, memory, compression]
+provides_tools: []
+provides_hooks: []
+provides_middleware: []
+requires_env: []
+python_dependencies: []
