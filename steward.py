@@ -31,6 +31,25 @@ log = logging.getLogger(__name__)
 FIELDS = ("goal", "completed", "in_progress", "key_context", "todo")
 PROMPT_SOURCE_CHARS = 48_000
 HANDOFF_CHARS = 12_000
+# Plugin-owned retrieval hint: appended to every handoff by this module, never by
+# the auxiliary model, so it cannot be paraphrased away or dropped. Exact-once:
+# prior copies are removed before re-appending (model echoes, iterative runs).
+ARCHIVE_FOOTER = (
+    "\n\n## Archived original conversation\n"
+    "Earlier turns compacted out of this context are archived in this session's history and "
+    "remain retrievable. When you need a detail this handoff does not carry (exact wording, "
+    "file paths, numbers, commands, error messages, earlier tool output), call `session_search` "
+    "and answer from the retrieved original messages; do not guess or invent it."
+)
+
+
+def with_archive_footer(text: str) -> str:
+    """Exactly one footer, always last before any end-of-summary marker."""
+    cleaned = text.replace(ARCHIVE_FOOTER, "")
+    idx = cleaned.rfind(_SUMMARY_END_MARKER)
+    if idx >= 0:
+        return cleaned[:idx].rstrip() + ARCHIVE_FOOTER + "\n\n" + cleaned[idx:]
+    return cleaned.rstrip() + ARCHIVE_FOOTER
 
 
 def scrub(text: str) -> str:
@@ -149,6 +168,8 @@ class ContextSteward(ContextCompressor):
         # latest persisted carrier independently of ordinary record sampling.
         _, persisted = self._find_latest_context_summary(messages, 0, len(messages))
         previous = scrub(persisted or self._previous_summary or "")
+        # Never feed our own hint back: the model could otherwise echo it.
+        previous = previous.replace(ARCHIVE_FOOTER, "").strip()
         if len(previous) > HANDOFF_CHARS + 2_000:
             raise ValueError("previous handoff exceeds safe judgment input budget")
         sources = {}
@@ -303,6 +324,10 @@ class ContextSteward(ContextCompressor):
             else:
                 expanded.append(msg)
         result = expanded
+        # The parent's carrier is a handoff too: guarantee the same retrieval hint.
+        for msg in result:
+            if isinstance(msg.get("content"), str) and self._is_context_summary_message(msg):
+                msg["content"] = with_archive_footer(msg["content"])
         # A fallback must preserve both user anchors and the promised tail.
         if not self._quotes_survive(messages, result) or not self._tail_survives(messages, result):
             return self._preserve(messages, previous_state)
@@ -357,7 +382,7 @@ class ContextSteward(ContextCompressor):
             for field in FIELDS
         ))
         summary = self._with_summary_prefix(f"Context steward: {mode}\n\n{body}")
-        carrier = {"role": "user", "content": summary + "\n\n" + _SUMMARY_END_MARKER,
+        carrier = {"role": "user", "content": with_archive_footer(summary + "\n\n" + _SUMMARY_END_MARKER),
                    COMPRESSED_SUMMARY_METADATA_KEY: True,
                    COMPRESSED_SUMMARY_HAS_USER_TURN_KEY: bool(self._user_indices(messages))}
         systems = [copy.deepcopy(messages[i]) for i in sorted(keep) if messages[i].get("role") == "system"]

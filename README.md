@@ -22,7 +22,15 @@ This is an independent implementation for Hermes, with no DS Bot code dependency
 `context.steward`, defaulting to `0.5` if neither is set.
 A `fresh` decision is downgraded to `checkpoint` if work/todos remain or the last
 message is not a completed assistant reply (including an active tool round or an
-unanswered user request). The default is to preserve 3 user messages, including spacing and newlines.
+unanswered user request).
+
+Every handoff carrier — `checkpoint`, `fresh`, and the parent-compressor fallback —
+ends with one plugin-owned hint: earlier turns are archived in the session history,
+and details the handoff lacks (exact wording, paths, numbers, commands, error text,
+earlier tool output) must be recovered with `session_search` instead of guessed.
+The plugin appends that hint after redaction; the auxiliary model never produces
+it, and repeated compactions keep exactly one copy (prior copies are stripped
+before re-appending, and it is not fed back as the previous handoff). The default is to preserve 3 user messages, including spacing and newlines.
 User requests arriving under diagnostic ingress or internal presentation tags
 remain fully eligible as user messages; known synthetic recovery nudges and
 summary-only carriers are still excluded. Synthetic handoffs are not counted as human messages.

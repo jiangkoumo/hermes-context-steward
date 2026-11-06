@@ -55,13 +55,14 @@ class ExtremeTests(unittest.TestCase):
             def register_context_engine(self, e):
                 self.engine = e
         with tempfile.TemporaryDirectory(dir=ROOT / ".tmp") as tmp:
-            for name, ratio in (("profile-a", 0.25), ("profile-b", 0.6), ("profile-c", 0.4)):
+            for name, ratio in (("profile-a", 0.25), ("profile-b", 0.6), ("profile-c", 0.4), ("profile-0.3", 0.3)):
                 home = Path(tmp) / name
                 home.mkdir()
                 (home / "config.yaml").write_text(
                     f"compression:\n  threshold: {ratio}\ncontext:\n  engine: context-steward\n",
                     encoding="utf-8",
                 )
+                self.assertNotIn("check_ratio", (home / "config.yaml").read_text(encoding="utf-8"))
                 token = set_hermes_home_override(home)
                 try:
                     config = load_config_readonly()

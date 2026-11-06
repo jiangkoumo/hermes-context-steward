@@ -124,6 +124,11 @@ by Hermes's auxiliary channel, not declared as this plugin's keys.
 
 ## Review disclosures / 需向审阅者披露
 
+- Every handoff carrier (checkpoint, fresh, and the parent fallback) ends with a
+  plugin-owned hint telling the model to call the built-in `session_search` tool
+  when a needed detail is not in the handoff, instead of guessing. It is text only:
+  no extra network egress, no additional LLM call, and it reads the session history
+  through Hermes's own documented tool.
 - Pure context-engine registration and subclassing; no core source edits,
   function rebinding, registry mutation or runtime monkey patch.
 - Network traffic uses Hermes's existing `auxiliary.compression` route. It sends

@@ -78,6 +78,27 @@ def prepare_fixtures():
         (directory / f"data-{f:02d}.txt").write_text("\n".join(rows) + "\n")
 
 
+def prepare_detail_fixture():
+    """A small file whose line 87 word exists ONLY in the archived tool output."""
+    directory = ROOT / ".tmp" / "live-fixtures"
+    directory.mkdir(parents=True, exist_ok=True)
+    state = 991733
+    rows = []
+    for line in range(1, 121):
+        words = []
+        for _ in range(4):
+            letters = []
+            for _ in range(13):
+                state = (state * 1103515245 + 12345) & 0x7fffffff
+                letters.append(chr(97 + state % 26))
+            words.append("".join(letters))
+        rows.append(f"L{line}\t" + " ".join(words))
+    marker = rows[86].split("\t", 1)[1].split()[0]
+    path = directory / "detail-B.txt"
+    path.write_text("\n".join(rows) + "\n")
+    return path, marker
+
+
 def summary_fingerprint(messages):
     # The REST presentation deliberately blanks hidden summary content. Its
     # newly persisted row id is still exposed and changes at each commit.
@@ -95,12 +116,49 @@ def parse_answer(answer):
     return json.loads(fence.group(1) if fence else answer)
 
 
+def phase_archive(client):
+    """Compaction must send the model to session_search for a fact only the archive holds."""
+    prepare_fixtures()
+    path, marker = prepare_detail_fixture()
+    sid = "steward-archive-" + uuid.uuid4().hex[:10]
+    client.request("/api/sessions", {"id": sid, "title": sid, "source": "api_server"})
+    for i in range(2):
+        client.turn(sid, f"Setup {i}: authorized retention test. Use only read_file. "
+                    "Never edit, run shell, delegate or contact anyone. Reply READY.", diagnostic=False)
+    client.turn(sid, "Read this file completely with read_file: " + str(path) +
+                "\nDo not quote or summarize its contents; reply only READ and wait.")
+    emit("detail_read", sid=sid, path=str(path), line=87, marker=marker)
+    fingerprint = summary_fingerprint(client.messages(sid))
+    batch = 0
+    while batch < 14 and fingerprint is None:
+        paths = [str(ROOT / ".tmp" / "live-fixtures" / f"data-{(batch*8+i)%64:02d}.txt") for i in range(8)]
+        client.turn(sid, "FILLER request: read these eight files with read_file, one call each, "
+                    "keeping the output in this conversation; reply only ACK and wait.\n" + "\n".join(paths))
+        batch += 1
+        fingerprint = summary_fingerprint(client.messages(sid))
+    emit("compacted", sid=sid, filler_batches=batch, fingerprint=fingerprint)
+    assert fingerprint is not None, "no compaction observed"
+    question = ("Question about work earlier in THIS session: in detail-B.txt that you read before, "
+                 "what is the first word on line 87? Answer with that word only — do not guess; "
+                 "if the detail is not in your current context, look it up in the archived history.")
+    answer, _ = client.turn(sid, question)
+    passed = marker in answer
+    emit("archive_recall", sid=sid, expected=marker, observed=answer[:200], passed=passed)
+    STATE.write_text(json.dumps({"sid": sid, "marker": marker, "filler_batches": batch},
+                                ensure_ascii=False, indent=2))
+    assert passed, "bot did not recover the archived line-87 word"
+    emit("completed", phase="archive", sid=sid, compactions=1, filler_batches=batch)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--phase", choices=("normal", "fallback"), required=True)
+    parser.add_argument("--phase", choices=("normal", "fallback", "archive"), required=True)
     parser.add_argument("--resume", action="store_true", help="continue existing fixture session; count only new commits")
     args = parser.parse_args()
     client = Client()
+    if args.phase == "archive":
+        phase_archive(client)
+        return
     if args.phase == "normal" and not args.resume:
         prepare_fixtures()
         sid = "steward-extreme-" + uuid.uuid4().hex[:10]
