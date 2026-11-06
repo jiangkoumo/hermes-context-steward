@@ -161,8 +161,7 @@ by Hermes's auxiliary channel, not declared as this plugin's keys.
 
 ## Current status / 当前状态
 
-Ready for the operator to publish. {"status": "prepared"}: these are true as of
-this commit and nothing below has been done yet —
+Ready for the operator to publish. Nothing below has been done yet —
 
 - Not pushed: `https://github.com/jiangkoumo/hermes-context-steward` is the planned
   remote; no repository exists to clone yet, so the catalog `sha` is still
