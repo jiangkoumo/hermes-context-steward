@@ -69,12 +69,21 @@ or a replacement that does not shrink context keeps the original messages.
 
 ## Compatibility
 
-Tested against the local Hermes v0.23.0 checkout at
-`2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19` on macOS, with the checkout's Python venv.
-The checkout includes local modifications; this is not a claim of testing every
-clean v0.23.0 distribution. `requires_hermes: ">=0.23.0"` is a minimum, not a promise
-that future internal compressor helpers stay compatible. Revalidate on upgrades.
-There are no extra Python dependencies.
+Verified against **clean upstream checkouts** (no local patches) of
+`NousResearch/hermes-agent`: v0.23.0 at `2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19`
+(the declared minimum) and `main` at `90d6b98f` (2026-11-06). In both, with the clean
+source first on `PYTHONPATH` and only the host venv reused, all 55 tests pass and
+`hermes plugins validate` passes with one disclosed warning (private core imports).
+No local-only core patch is required.
+
+A live end-to-end run on an isolated test bot (v0.23.0 checkout, local model route)
+confirmed the archive hint: after compaction, a question answerable only from the
+archived tool output made the model call `session_search` and answer exactly. That
+is one model in one environment, not a guarantee for every model.
+
+`requires_hermes: ">=0.23.0"` is a minimum, not a promise that future internal
+compressor helpers stay compatible; revalidate on upgrades. There are no extra
+Python dependencies.
 
 ## Install and activate (operator actions)
 
@@ -145,11 +154,13 @@ From this repository, using the existing Mac Hermes venv:
 ~/.hermes/hermes-agent/venv/bin/python scripts/check.py
 ```
 
-For a Hermes checkout elsewhere:
+Verification against a clean upstream checkout (the catalog CI shape):
 
 ```bash
-/path/to/hermes/venv/bin/python scripts/check.py --hermes-root /path/to/hermes
+/path/to/hermes/venv/bin/python scripts/check.py --hermes-root /path/to/clean/hermes-agent
 ```
+
+That is how the results above were produced for `2bd378ed` and `90d6b98f`.
 
 The runner performs unit tests and the real `validate_plugin_dir` admission checks,
 including the isolated registration probe, security scan and no-core-override
@@ -162,12 +173,16 @@ It installs no dependencies, changes no user configuration and starts no service
 adapter/loader are imported, and SQLite archive + FTS are exercised. **What is
 fake:** auxiliary model responses/network dispatch; some targeted fallback tests
 stub the parent to prove delegation or failure behavior. A separate test runs
-the real parent with a failing fake auxiliary call. No live provider/bot test or
-paid model call is claimed.
+the real parent with a failing fake auxiliary call. The live bot check was a
+separate manual run, not part of this suite.
 
 The official validator passes but warns about imports of compressor internals.
 Those are subclass implementation dependencies, not runtime monkey patches. The
-warning must be disclosed for catalog review; see [PUBLISHING.md](PUBLISHING.md).
+warning is disclosed for catalog review; see [PUBLISHING.md](PUBLISHING.md).
+
+`scripts/slimtest_live.py` is an opt-in maintainer harness that talks to a
+throwaway local gateway (`HERMES_SLIMTEST_HOME`, `HERMES_SLIMTEST_URL`); it is not
+part of the plugin runtime and is never imported by it.
 
 ## Limits
 

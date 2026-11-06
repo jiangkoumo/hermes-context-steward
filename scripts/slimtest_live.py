@@ -8,6 +8,7 @@ Runtime receipts/state are kept in the ignored project .tmp directory.
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import time
@@ -16,8 +17,9 @@ import urllib.request
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
-HOME = Path.home() / ".hermes-slimtest"
-BASE = "http://127.0.0.1:8699"
+# Maintainer-only live harness: point these at your own throwaway bot.
+HOME = Path(os.environ.get("HERMES_SLIMTEST_HOME") or (Path.home() / ".hermes-slimtest"))
+BASE = os.environ.get("HERMES_SLIMTEST_URL", "http://127.0.0.1:8699")
 STATE = ROOT / ".tmp" / "slimtest-live-state.json"
 
 

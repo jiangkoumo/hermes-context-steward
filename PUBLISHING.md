@@ -1,8 +1,13 @@
 # Publishing to the Hermes plugin catalog
 
-This document describes future operator actions. No push, PR, release, catalog
-submission, plugin installation, configuration change or service restart has been
-performed for this project.
+Target listing: **context-steward 0.2.0** —
+`https://github.com/jiangkoumo/hermes-context-steward`, maintainer `jiangkoumo`,
+`tier: community`, `category: memory`.
+
+The operator has authorized publishing (public repository + catalog PR). As of this
+commit the repository is **prepared but not published**: no remote push, no catalog
+PR and no listing exists yet, and this preparation installed or changed nothing
+under a user's `~/.hermes`.
 
 ## Verified mechanism / 已核实的上架方式
 
@@ -12,8 +17,12 @@ reviews and merges a PR adding `plugin-catalog/<name>.yaml`. Users can then find
 with `hermes plugins catalog` / `hermes plugins search` and install it by name.
 The plugin page is generated from that entry and the README at its pinned commit.
 
-Primary sources, inspected in the local Hermes v0.23.0 checkout at
-`2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19`:
+Primary sources, inspected in clean upstream checkouts fetched from
+`NousResearch/hermes-agent` (no local patches):
+
+- v0.23.0 at `2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19` — the declared minimum and
+  the release this plugin is verified against.
+- `main` at `90d6b98f` (fetched 2026-11-06) — verified as well.
 
 - [Catalog README and entry schema](https://github.com/NousResearch/hermes-agent/blob/main/plugin-catalog/README.md)
   (`plugin-catalog/README.md`).
@@ -35,12 +44,15 @@ did.
 
 ## Preparation / 提交前准备
 
-1. Choose a public GitHub or GitLab repository URL for this project. No remote URL
-   has been invented in this tree. Submit as its owner or a major contributor;
-   drive-by submissions of someone else's plugin are not accepted.
-2. Review and test on the supported Hermes release. Current tests use the local
-   Mac venv/worktree, which has local changes. Before advertising a clean-release
-   guarantee, repeat on a clean supported release and record its exact commit.
+1. Public repository: `https://github.com/jiangkoumo/hermes-context-steward`
+   (planned). Submit as its owner; drive-by submissions of someone else's plugin
+   are not accepted.
+2. Clean-release verification is **done** and must be repeated for any later pin
+   change. Against clean upstream checkouts of v0.23.0 (`2bd378ed`) and `main`
+   (`90d6b98f`), with the clean source first on `PYTHONPATH` and only the host venv
+   reused: 55/55 tests pass and `hermes plugins validate` passes, with one
+   private-imports warning disclosed below. The plugin does **not** depend on the
+   local checkout's uncommitted patches.
 3. Keep `plugin.yaml`'s name, version and `requires_hermes` accurate. The current
    minimum `>=0.23.0` is a SemVer floor, not a calendar date. Do not claim a newer
    minimum than the released Hermes version. Dependency list is empty: the plugin
@@ -61,42 +73,27 @@ did.
    hermes plugins validate /absolute/path/to/hermes-context-steward --install-deps
    ```
 
-   This is a **suggested future command, not an action performed here**. The CLI
-   dependency provisioning flag may create an environment; it was deliberately
-   not used during this task. This plugin declares no extra dependencies. Inspect
-   every warning as well as failures.
+   This is a **suggested pre-PR command, not an action performed in this task**. The
+   CLI dependency provisioning flag may create an environment; it was deliberately
+   not used. This plugin declares no extra dependencies, so the catalog CI run adds
+   nothing to install. Inspect every warning as well as failures.
 6. Ensure only reviewable source is committed. Exclude `.test-hermes/`, `.tmp/`,
    bytecode, caches, databases, credentials and build output. Keep MIT LICENSE and
    both READMEs in the pinned tree. There is no binary build or package upload.
 7. Resolve the internal-helper compatibility review described below. Passing a
    validator does not guarantee catalog acceptance.
-8. After explicit publication authorization, make the repository publicly
-   reachable and capture its full **40-character commit SHA**. A branch, tag,
-   abbreviated SHA or a moving URL is not a valid catalog pin.
+8. The repository must be publicly reachable and the catalog `sha` must be the full
+   **40-character commit** reviewed at that pin. A branch, tag, abbreviated SHA or
+   a moving URL is not a valid catalog pin.
 
 ## Catalog entry / 目录条目
 
-The following is a template only. Replace all placeholders with the real public
-repository and the exact reviewed commit. Do not put this template in the catalog
-until it is concrete and authorized.
-
-```yaml
-name: context-steward
-repo: https://github.com/<owner>/<repository>
-sha: <full-40-character-commit-sha>
-description: One auxiliary judgment chooses a checkpoint or a fresh context segment in the same chat.
-maintainer: <repository-owner>
-tier: community
-category: memory
-requires_hermes: ">=0.23.0"
-version: "0.1.0"
-readme: true
-capabilities:
-  provides_tools: []
-  provides_hooks: []
-  provides_middleware: []
-  requires_env: []
-```
+The ready-to-copy entry lives at [`catalog/context-steward.yaml`](catalog/context-steward.yaml).
+`sha: FULL_SHA` is the only placeholder: replace it with the full 40-character commit
+SHA after pushing (branch, tag and short SHAs are rejected by the loader). Fields
+follow the upstream `Entry schema`: `name`, `repo`, `sha`, `description`,
+`maintainer`, `tier`, `category`, `requires_hermes`, `version`, `readme`,
+`known_issues`, `capabilities`.
 
 Root layout needs no `subdir`. The engine is registered with
 `ctx.register_context_engine`; it registers no tools, hooks or middleware and
@@ -106,7 +103,8 @@ by Hermes's auxiliary channel, not declared as this plugin's keys.
 ## PR and review / 上架步骤
 
 1. In a separate, authorized checkout/fork of `NousResearch/hermes-agent`, add only
-   `plugin-catalog/context-steward.yaml` using the concrete entry above.
+   `plugin-catalog/context-steward.yaml`, copied from `catalog/context-steward.yaml`
+   with `FULL_SHA` replaced by the reviewed pin.
 2. Open the catalog PR, describing behavior, tests, exact compatibility baseline
    and the disclosures below. Only Nous maintainers assign `official` or
    `verified`; use `community`.
@@ -155,13 +153,27 @@ by Hermes's auxiliary channel, not declared as this plugin's keys.
   plugin. Do not hide the warning, claim unconditional market readiness, or
   bypass review. If requested, open an API proposal in separately authorized
   work; this task changes no Hermes core.
-- Automated tests do not establish live model judgment quality, clean-release
-  compatibility or live gateway/UI behavior. Those are pre-publication checks
-  for the operator's chosen environment.
+- Automated tests do not establish live model judgment quality. One live run on an
+  isolated local test bot (v0.23.0 checkout, local model route) did verify the
+  archive hint end to end: after compaction, a question answerable only from the
+  archived tool output made the model call `session_search` and answer exactly.
+  That is one model and one environment, not a guarantee for every model.
 
 ## Current status / 当前状态
 
-Implemented and locally tested as a standalone plugin. Publication is deliberately
-pending: public repository URL and publication authorization, exact reviewed pin,
-clean-release/live-model validation, and maintainer acceptance of the subclass
-helper dependencies. None of those pending steps modifies local user state.
+Ready for the operator to publish. {"status": "prepared"}: these are true as of
+this commit and nothing below has been done yet —
+
+- Not pushed: `https://github.com/jiangkoumo/hermes-context-steward` is the planned
+  remote; no repository exists to clone yet, so the catalog `sha` is still
+  `FULL_SHA`.
+- No catalog PR has been opened against `NousResearch/hermes-agent`.
+- Nothing from this preparation was installed into or enabled on a user's profile;
+  the four production profiles still run the previously installed plugin copy.
+- Verification done: 55/55 tests and `hermes plugins validate` pass against clean
+  upstream v0.23.0 (`2bd378ed`) and clean `main` (`90d6b98f`); one warning
+  (private core imports) remains and is disclosed above.
+- Remaining before merge: publish + pin the SHA, rerun
+  `hermes plugins validate … --install-deps` at that pin, then submit the entry for
+  maintainer review. Admission is not automatic; the private-import dependency is
+  the item most likely to be challenged.

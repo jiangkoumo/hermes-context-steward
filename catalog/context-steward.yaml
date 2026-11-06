@@ -1,0 +1,33 @@
+# Catalog entry for the Hermes plugin catalog (NousResearch/hermes-agent).
+#
+# This file is a ready-to-copy template, not part of the plugin runtime. Open the
+# catalog PR against NousResearch/hermes-agent and add it as
+# `plugin-catalog/context-steward.yaml`.
+#
+# Before opening that PR:
+#   1. Push this repository publicly.
+#   2. Replace FULL_SHA below with the full 40-character commit SHA you reviewed
+#      and tested (branch/tag/short SHA are rejected by the catalog loader).
+#   3. Re-run, against a checkout of that exact commit:
+#        hermes plugins validate /absolute/path/to/hermes-context-steward --install-deps
+#   4. Keep `version` in sync with plugin.yaml.
+#
+# Schema source: plugin-catalog/README.md in NousResearch/hermes-agent ("Entry schema").
+
+name: context-steward
+repo: https://github.com/jiangkoumo/hermes-context-steward
+sha: FULL_SHA
+description: One auxiliary judgment chooses a checkpoint or a fresh context segment in the same chat.
+maintainer: jiangkoumo
+tier: community
+category: memory
+requires_hermes: ">=0.23.0"
+version: "0.2.0"
+readme: true
+known_issues:
+  - "Uses internal ContextCompressor helper/metadata APIs; the validator reports a private-imports warning and a Hermes release could rename them."
+capabilities:
+  provides_tools: []
+  provides_hooks: []
+  provides_middleware: []
+  requires_env: []
