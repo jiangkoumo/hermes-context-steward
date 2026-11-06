@@ -1,5 +1,5 @@
 name: context-steward
-version: "0.1.0"
+version: "0.2.0"
 description: "One auxiliary judgment chooses a safe checkpoint or a fresh context segment in the same chat."
 author: jiangkoumo
 requires_hermes: ">=0.23.0"
