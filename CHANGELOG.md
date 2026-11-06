@@ -15,6 +15,17 @@
 - Model updates and per-agent clones keep the hot-reloaded ratio and cap. Removing
   a live window pin restores the last window supplied through public `update_model`
   without a private metadata lookup.
+- **More recent context survives a checkpoint.** New `keep_recent_turns` (default 8)
+  keeps whole recent turns verbatim - request, assistant replies and tool rounds -
+  instead of three user lines; `keep_recent_tokens` bounds that window (default:
+  15% of the trigger, clamped to 12k-60k). Tool payloads inside the window are
+  stubbed except the newest three results and the protected tail. On a copy of the
+  production transcript that previously became 9 rows / 3 user lines, the same
+  input now keeps 66 rows / 8 turns (~12k tokens) and still compacts.
+- Documented why Desktop/mobile may only show the new tail after compaction: the
+  rows are correct and compacted=1; the host REST endpoint defaults
+  `include_compacted=False` and the Desktop initial load omits the flag. See
+  PUBLISHING.md for the upstream suggestion.
 - Regression tests execute the real upstream `_apply_live_compression_config`,
   covering repeated hot reloads, usage boundaries, cap removal, window-pin removal
   and clone isolation on local, clean v0.23.0 and clean main.

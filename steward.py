@@ -43,6 +43,25 @@ RECORD_MAX_CHARS = 1_200
 PROTECT_TAIL_MESSAGES = 6
 MAX_ANCHORS = 8
 
+# Verbatim recent-window policy. A turn is one human request plus everything up
+# to the next request (assistant replies and tool rounds). Keeping whole turns is
+# what makes a compaction readable afterwards: the earlier shape kept only three
+# user lines, which production showed collapsing 190 messages into 9.
+# Budget: 15% of the trigger, clamped to [12k, 60k] tokens. At the default 0.3
+# ratio that is ~45k for a 1M window (a small model call's worth of context,
+# leaving ~85% of the pre-compaction load actually freed) and 12k for a 256K
+# window; 60k stops a huge window from retaining an entire session.
+KEEP_RECENT_TURNS = 8
+KEEP_RECENT_TOKENS_RATIO = 0.15
+KEEP_RECENT_TOKENS_MIN = 12_000
+KEEP_RECENT_TOKENS_MAX = 60_000
+# Tool output inside the retained window is trimmed before the newest few
+# results, so a long tool loop keeps its shape without the payload.
+KEEP_UNTRIMMED_TOOL_RESULTS = 3
+TOOL_STUB_HEAD_CHARS = 400
+TOOL_STUB_TAIL_CHARS = 200
+TOOL_STUB_MIN_CHARS = 800
+
 # Compatibility text, NOT an import: Hermes recognises a persisted compaction
 # handoff by these literal prefixes / end marker (agent/context_compressor.py).
 # Both strings are asserted equal to the host's current constants by the test
@@ -387,7 +406,9 @@ class ContextSteward(ContextEngine):
     protect_first_n = 0
 
     def __init__(self, model: str = "", *, check_ratio: float = 0.5,
-                 keep_user_messages: int = 3, verdict_route: ModelRoute | None = None,
+                 keep_user_messages: int = 3, keep_recent_turns: int = KEEP_RECENT_TURNS,
+                 keep_recent_tokens: int = 0,
+                 verdict_route: ModelRoute | None = None,
                  summary_route: ModelRoute | None = None, llm: Any = None, **kwargs):
         if kwargs:
             raise ValueError(f"unknown setting(s): {', '.join(sorted(kwargs))}")
@@ -397,11 +418,17 @@ class ContextSteward(ContextEngine):
             raise ValueError("check_ratio must be a number between 0 and 1")
         if type(keep_user_messages) is not int or keep_user_messages < 1:
             raise ValueError("keep_user_messages must be a positive integer")
+        if type(keep_recent_turns) is not int or keep_recent_turns < 0:
+            raise ValueError("keep_recent_turns must be a non-negative integer")
+        if type(keep_recent_tokens) is not int or keep_recent_tokens < 0:
+            raise ValueError("keep_recent_tokens must be a non-negative integer (0 = derive from the trigger)")
         self.model = model
         self.check_ratio = float(check_ratio)
         self.threshold_percent = self.check_ratio
         self.threshold_tokens_cap = None
         self.keep_user_messages = keep_user_messages
+        self.keep_recent_turns = keep_recent_turns
+        self.keep_recent_tokens = keep_recent_tokens
         self.verdict_route = verdict_route or ModelRoute()
         self.summary_route = summary_route or ModelRoute()
         self._llm = llm
@@ -499,7 +526,8 @@ class ContextSteward(ContextEngine):
             settings = {}
         if not isinstance(settings, dict):
             raise ValueError("context.steward must be a mapping")
-        allowed = {"check_ratio", "keep_user_messages", "verdict_model", "verdict", "summary"}
+        allowed = {"check_ratio", "keep_user_messages", "keep_recent_turns", "keep_recent_tokens",
+                   "verdict_model", "verdict", "summary"}
         unknown = set(settings) - allowed
         if unknown:
             raise ValueError(f"unknown context.steward setting(s): {', '.join(sorted(unknown))}")
@@ -527,6 +555,8 @@ class ContextSteward(ContextEngine):
         """Share the host LLM facade; keep mutable budget state per agent."""
         clone = type(self)(model=self.model, check_ratio=self.check_ratio,
                            keep_user_messages=self.keep_user_messages,
+                           keep_recent_turns=self.keep_recent_turns,
+                           keep_recent_tokens=self.keep_recent_tokens,
                            verdict_route=self.verdict_route, summary_route=self.summary_route,
                            llm=self._llm)
         clone._model_context_length = getattr(self, "_model_context_length", self.context_length)
@@ -795,9 +825,49 @@ class ContextSteward(ContextEngine):
                 out.append(index)
         return out[-self.keep_user_messages:]
 
+    def keep_recent_token_budget(self):
+        """Tokens of verbatim recent turns kept; 0 in config derives it from the trigger."""
+        if self.keep_recent_tokens:
+            return self.keep_recent_tokens
+        budget = int(self.threshold_tokens * KEEP_RECENT_TOKENS_RATIO)
+        return max(KEEP_RECENT_TOKENS_MIN, min(KEEP_RECENT_TOKENS_MAX, budget))
+
+    def _turn_start_indices(self, messages):
+        return [index for index, message in enumerate(messages)
+                if message.get("role") == "user" and not _is_summary(message)
+                and message.get("display_kind") != "hidden"
+                and _text(message.get("content")).strip()]
+
+    def _recent_turn_indices(self, messages):
+        """Whole newest turns, bounded by keep_recent_turns and the token budget."""
+        starts = self._turn_start_indices(messages)
+        if not starts or self.keep_recent_turns == 0:
+            return set()
+        budget = self.keep_recent_token_budget()
+        selected: set[int] = set()
+        used = turns = 0
+        for position in range(len(starts) - 1, -1, -1):
+            if turns >= self.keep_recent_turns:
+                break
+            start = starts[position]
+            end = starts[position + 1] if position + 1 < len(starts) else len(messages)
+            span = list(range(start, end))
+            cost = estimate_tokens([messages[index] for index in span])
+            # The newest turn is always kept; older ones must also fit the budget.
+            if turns and used + cost > budget:
+                break
+            selected.update(span)
+            used += cost
+            turns += 1
+        return selected
+
     def _retained_indices(self, messages, mode):
         keep = {i for i, m in enumerate(messages) if m.get("role") == "system"}
-        keep.update(self._human_user_indices(messages))
+        if self.keep_recent_turns:
+            keep.update(self._recent_turn_indices(messages))
+        else:
+            # Legacy shape: only the newest N user lines, no assistant context.
+            keep.update(self._human_user_indices(messages))
         if mode == "fresh":
             keep.add(len(messages) - 1)
         else:
@@ -826,10 +896,17 @@ class ContextSteward(ContextEngine):
                             break
         return keep
 
+    def _expected_user_texts(self, messages):
+        """Human texts this retention policy promises to keep verbatim."""
+        if not self.keep_recent_turns:
+            return [_text(messages[i].get("content")) for i in self._human_user_indices(messages)]
+        selected = self._recent_turn_indices(messages)
+        return [_text(messages[i].get("content")) for i in self._turn_start_indices(messages)
+                if i in selected]
+
     def _quotes_survive(self, messages, result):
         available = [_text(m.get("content")) for m in result if m.get("role") == "user"]
-        for index in self._human_user_indices(messages):
-            content = _text(messages[index].get("content"))
+        for content in self._expected_user_texts(messages):
             match = next((j for j, candidate in enumerate(available) if candidate == content), None)
             if match is None:
                 return False
@@ -842,6 +919,29 @@ class ContextSteward(ContextEngine):
         expected = [tuple(m.get(k) for k in fields) for m in protected]
         actual = [tuple(m.get(k) for k in fields) for m in result[-len(protected):]]
         return actual == expected
+
+    @staticmethod
+    def _trim_tool_outputs(rows, protected_tail=PROTECT_TAIL_MESSAGES):
+        """Keep the shape of retained tool rounds but not their payload."""
+        positions = [i for i, m in enumerate(rows) if m.get("role") == "tool"]
+        untrimmed = set(positions[-KEEP_UNTRIMMED_TOOL_RESULTS:])
+        tail_start = max(0, len(rows) - protected_tail)
+        clipped = 0
+        trimmed = []
+        for index, message in enumerate(rows):
+            text = message.get("content")
+            if (message.get("role") == "tool" and index not in untrimmed and index < tail_start
+                    and isinstance(text, str) and len(text) > TOOL_STUB_MIN_CHARS):
+                message = dict(message)
+                message["content"] = (
+                    text[:TOOL_STUB_HEAD_CHARS]
+                    + "\n[... tool output trimmed by context steward; the full text stays in the "
+                      "archived transcript ...]\n"
+                    + text[-TOOL_STUB_TAIL_CHARS:]
+                )
+                clipped += 1
+            trimmed.append(message)
+        return trimmed, clipped
 
     @staticmethod
     def _sanitize_tool_pairs(rows):
@@ -934,6 +1034,7 @@ class ContextSteward(ContextEngine):
         systems = [copy.deepcopy(messages[i]) for i in sorted(keep) if messages[i].get("role") == "system"]
         tail = [copy.deepcopy(messages[i]) for i in sorted(keep) if messages[i].get("role") != "system"]
         candidate = self._sanitize_tool_pairs(systems + [carrier] + tail)
+        candidate, clipped = self._trim_tool_outputs(candidate)
         if self._active_attempt != mine:  # superseded by a newer attempt
             return messages
         if estimate_tokens(candidate) >= estimate_tokens(messages):

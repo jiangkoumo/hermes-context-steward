@@ -93,12 +93,13 @@ class JudgmentTests(StewardCase):
         self.assertNotIn("api_key", llm.calls[0])
         self.assertIn("request 15", llm.calls[0]["messages"][0]["content"])
 
-    def test_fresh_keeps_completed_reply_and_drops_old_answers(self):
+    def test_fresh_keeps_completed_reply_and_recent_turns(self):
         llm = FakeLlm(verdict("fresh"))
         e = engine(llm)
         result = e.compress(self.messages, force=True)
         self.assertEqual(e.last_mode, "fresh")
-        self.assertEqual(len(result), 6)
+        # System + handoff + the retained recent turns (user + assistant each).
+        self.assertEqual(len(result), 2 + 2 * e.keep_recent_turns)
         self.assertEqual(result[-1]["content"], self.messages[-1]["content"])
         self.assertFalse(any(m.get("content") == self.messages[2]["content"] for m in result))
         self.assert_quotes(result)
@@ -336,6 +337,15 @@ class HostIntegrationTests(StewardCase):
                 self.assertFalse(any(m["content"] == old_content for m in live))
                 archived = [m for m in all_rows if m["content"] == old_content]
                 self.assertEqual(len(archived), 1)
+                # Display parity with the built-in compressor: the archived turn is a
+                # compacted=1 row, so a client that asks for compacted history gets it
+                # back, and one that does not only sees the active tail.
+                compacted_view = db.get_messages_as_conversation("steward-test", include_compacted=True)
+                plain_view = db.get_messages_as_conversation("steward-test", include_compacted=False)
+                archived_user = self.messages[1]["content"]
+                self.assertTrue(any(m["content"] == archived_user for m in compacted_view))
+                self.assertFalse(any(m["content"] == archived_user for m in plain_view))
+                self.assertGreater(len(compacted_view), len(plain_view))
                 self.assertNotIn(marker, " ".join(str(m.get("content")) for m in live))
                 found = json.loads(session_search(query=marker, db=db))
                 self.assertIn(marker, json.dumps(found, ensure_ascii=False))

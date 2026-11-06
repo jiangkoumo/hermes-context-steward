@@ -50,7 +50,7 @@ did.
 2. Clean-release verification is **done** and must be repeated for any later pin
    change. Against clean upstream checkouts of v0.23.0 (`2bd378ed`) and `main`
    (`90d6b98f`), with the clean source first on `PYTHONPATH` and only the host venv
-   reused: 76/76 tests pass and `hermes plugins validate` passes with **no
+   reused: 86/86 tests pass and `hermes plugins validate` passes with **no
    warnings** (no private imports, no core override, security scan `safe`). The
    plugin does **not** depend on the local checkout's uncommitted patches.
 3. Keep `plugin.yaml`'s name, version and `requires_hermes` accurate. The current
@@ -205,6 +205,43 @@ duplication and let this plugin (and future ones) rely fully on documented API.
    plugin restores the last public `update_model` window; resolving new model
    metadata should remain a host responsibility.
 
+## History visibility after a compaction (investigated 2026-11-06)
+
+Reported symptom: after a checkpoint, Desktop and a mobile client showed only the
+new tail, not the earlier conversation. Investigated on a **read-only copy** of the
+production `layerfs` state.db (session 2026-11-05 "Bot Chat"):
+
+- Rows: 25 active, **511 archived with compacted=1**, 489 inactive with compacted=0.
+- Host read paths disagree: `get_messages_as_conversation(include_compacted=False)`
+  returns **25** rows, with `include_compacted=True` **524**.
+- 486 of the 489 compacted=0 rows are byte-identical duplicates of a row that is
+  active or compacted=1; only 3 have no twin. They are Hermes's rewind-style
+  archives of carried-tail originals (intentionally hidden from display so a
+  carried message is not rendered twice), not lost history.
+- Plugin conformance: archived turns committed through the host are compacted=1
+  with `display_order` and `message_uid` populated; the handoff carrier is a single
+  `_compressed_summary` row recognised by the host summary detector
+  (`[CONTEXT SUMMARY]:`). The test suite asserts this display parity end to end.
+- The live gateway path already opts in:
+  `tui_gateway/session_registry.py::_live_visible_history` reads
+  `include_compacted=True, include_ancestors=True`.
+- The REST endpoint `GET /api/sessions/{id}/messages` defaults
+  `include_compacted=False` (`hermes_cli/web_routers/sessions.py`). Desktop's
+  initial load (`getSessionMessages`) calls it without the flag, while its paging
+  calls (`getLatestSessionMessages` / `getOlderSessionMessages`) do pass it.
+
+**Conclusion: not a plugin defect.** The conversation is stored in the shape the
+built-in compressor produces and is returned as soon as a caller asks for compacted
+history. Upstream suggestions (not filed, no core changes made):
+
+1. Default `include_compacted` to true on `GET /api/sessions/{id}/messages`, or make
+   the default mean "the user's conversation": archive-vs-active is an
+   implementation detail, not a UI distinction.
+2. Have Desktop's `getSessionMessages` pass `include_compacted=true` like its paging
+   siblings (and have mobile clients do the same).
+3. Document the `active=0, compacted=0` rewind rows so third-party clients know they
+   are duplicates and must stay hidden.
+
 ## Current status / 当前状态
 
 Ready for the operator to publish. Nothing below has been done yet —
@@ -215,7 +252,7 @@ Ready for the operator to publish. Nothing below has been done yet —
 - No catalog PR has been opened against `NousResearch/hermes-agent`.
 - Nothing from this preparation was installed into or enabled on a user's profile;
   the four production profiles still run the previously installed plugin copy.
-- Verification done: 76/76 tests and `hermes plugins validate` pass with zero
+- Verification done: 86/86 tests and `hermes plugins validate` pass with zero
   warnings against clean upstream v0.23.0 (`2bd378ed`) and clean `main`
   (`90d6b98f`), and the live test bot run passed for the 0.3.0 code.
 - Remaining before merge: publish + pin the SHA, rerun

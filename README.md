@@ -184,8 +184,18 @@ To switch back, set `context.engine: compressor`.
 | Setting (`context.steward`) | Default | Meaning |
 | --- | --- | --- |
 | `check_ratio` | `0.5` | Finite number strictly between 0 and 1; fraction of the full model context window. No built-in 75% small-window floor. |
-| `keep_user_messages` | `3` | Positive integer; number of latest human user messages kept verbatim in both modes. |
+| `keep_recent_turns` | `8` | Whole newest turns kept verbatim — each human request plus the assistant replies and tool rounds up to the next request. `0` restores the old shape (user lines only). |
+| `keep_recent_tokens` | `0` | Token budget for that window; `0` derives it as 15% of the trigger, clamped to 12k–60k (≈45k at the default 0.3 ratio on a 1M window). A turn is always kept whole, and the newest turn is always kept. |
+| `keep_user_messages` | `3` | Only used when `keep_recent_turns` is `0`: number of latest human user messages kept verbatim. |
 | `verdict_model` | `""` | Optional model name on the existing compression auxiliary route. Change its provider/auth through Hermes's `auxiliary.compression` settings. |
+
+Why whole turns: a checkpoint that kept only the newest user lines collapsed a
+production 190-message window into 9 rows, so the model (and the user scrolling
+back) saw three isolated statements without the answers they belonged to. Keeping
+whole recent turns costs ~15% of the trigger while releasing the rest; tool payloads
+inside the window are stubbed (the newest three results and the protected tail stay
+intact), so the shape survives without the bytes. The full originals remain in the
+archived transcript and are reachable with `session_search`.
 
 Invalid settings fail plugin loading visibly rather than silently taking different
 values. Desktop/TUI live config saves adopt the effective ratio resolved by the
