@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from agent.plugin_llm import PluginLlmTrustError
 from test_support import (
-    ContextSteward, FakeLlm, StewardCase, carrier_of, engine, history, plugin, steward, verdict,
+    ContextSteward, FakeLlm, ROOT, StewardCase, carrier_of, engine, history, plugin, steward, verdict,
 )
 
 GOOD_PROVIDER = patch("context_steward_test_plugin.steward.get_provider_profile",
@@ -121,6 +121,27 @@ class SettingsTests(unittest.TestCase):
 
 
 class RoutingTests(StewardCase):
+    def test_release_defaults_use_aux_compression_without_an_operator_route(self):
+        llm = FakeLlm(verdict())
+        e = ContextSteward.from_settings({}, compression={"threshold": 0.3}, llm=llm)
+        e.update_model("main-model", 1_000_000)
+        result = e.compress(self.messages, force=True)
+        self.assertFalse(e.verdict_route.configured)
+        self.assertFalse(e.summary_route.configured)
+        self.assertEqual(e.threshold_tokens, 300_000)
+        self.assertEqual(e.last_outcome, "compacted")
+        self.assertEqual(len(llm.calls), 1)
+        self.assertEqual(llm.calls[0]["task"], "compression")
+        self.assertEqual(llm.calls[0]["purpose"], "context-steward.judgment")
+        for key in ("provider", "model", "base_url", "api_key", "api_key_env"):
+            self.assertNotIn(key, llm.calls[0])
+        self.assertIn("Read src/app.py", carrier_of(result))
+
+    def test_catalog_has_no_operator_specific_provider_or_endpoint(self):
+        content = (ROOT / "catalog" / "context-steward.yaml").read_text(encoding="utf-8")
+        for operator_value in ("magpie", "opendesign/", "127.0.0.1:3425", "1048000", "1,048,000"):
+            self.assertNotIn(operator_value, content)
+
     def test_single_call_uses_the_configured_route(self):
         llm = FakeLlm(verdict())
         e = ContextSteward(model="m", llm=llm, verdict_route=steward.ModelRoute("magpie", "small"))

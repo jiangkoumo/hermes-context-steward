@@ -50,7 +50,7 @@ did.
 2. Clean-release verification is **done** and must be repeated for any later pin
    change. Against clean upstream checkouts of v0.23.0 (`2bd378ed`) and `main`
    (`90d6b98f`), with the clean source first on `PYTHONPATH` and only the host venv
-   reused: 64/64 tests pass and `hermes plugins validate` passes with **no
+   reused: 66/66 tests pass and `hermes plugins validate` passes with **no
    warnings** (no private imports, no core override, security scan `safe`). The
    plugin does **not** depend on the local checkout's uncommitted patches.
 3. Keep `plugin.yaml`'s name, version and `requires_hermes` accurate. The current
@@ -205,7 +205,7 @@ Ready for the operator to publish. Nothing below has been done yet —
 - No catalog PR has been opened against `NousResearch/hermes-agent`.
 - Nothing from this preparation was installed into or enabled on a user's profile;
   the four production profiles still run the previously installed plugin copy.
-- Verification done: 64/64 tests and `hermes plugins validate` pass with zero
+- Verification done: 66/66 tests and `hermes plugins validate` pass with zero
   warnings against clean upstream v0.23.0 (`2bd378ed`) and clean `main`
   (`90d6b98f`), and the live test bot run passed for the 0.3.0 code.
 - Remaining before merge: publish + pin the SHA, rerun

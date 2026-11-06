@@ -137,7 +137,7 @@ original transcript is returned unchanged.
 Verified against **clean upstream checkouts** (no local patches) of
 `NousResearch/hermes-agent`: v0.23.0 at `2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19`
 (the declared minimum) and `main` at `90d6b98f` (2026-11-06). In both, with the clean
-source first on `PYTHONPATH` and only the host venv reused, all 64 tests pass and
+source first on `PYTHONPATH` and only the host venv reused, all 66 tests pass and
 `hermes plugins validate` passes with **no warnings** — the plugin imports only
 documented modules (`agent.context_engine`, `agent.plugin_llm`, `hermes_cli.config`)
 and does not subclass or import Hermes's internal compressor.

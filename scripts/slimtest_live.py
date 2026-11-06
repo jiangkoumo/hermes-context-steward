@@ -84,7 +84,7 @@ def prepare_detail_fixture():
     """A small file whose line 87 word exists ONLY in the archived tool output."""
     directory = ROOT / ".tmp" / "live-fixtures"
     directory.mkdir(parents=True, exist_ok=True)
-    state = 991733
+    state = uuid.uuid4().int & 0x7fffffff
     rows = []
     for line in range(1, 121):
         words = []
@@ -124,31 +124,51 @@ def phase_archive(client):
     path, marker = prepare_detail_fixture()
     sid = "steward-archive-" + uuid.uuid4().hex[:10]
     client.request("/api/sessions", {"id": sid, "title": sid, "source": "api_server"})
+    requests = []
     for i in range(2):
-        client.turn(sid, f"Setup {i}: authorized retention test. Use only read_file. "
-                    "Never edit, run shell, delegate or contact anyone. Reply READY.", diagnostic=False)
-    client.turn(sid, "Read this file completely with read_file: " + str(path) +
-                "\nDo not quote or summarize its contents; reply only READ and wait.")
+        text = (f"Setup {i}: authorized retention test. Use only read_file. "
+                "Never edit, run shell, delegate or contact anyone. Reply READY.")
+        client.turn(sid, text, diagnostic=False)
+        requests.append(text)
+    text = ("Read this file completely with read_file: " + str(path) +
+            "\nDo not quote or summarize its contents; reply only READ and wait.")
+    client.turn(sid, text)
+    requests.append(text)
     emit("detail_read", sid=sid, path=str(path), line=87, marker=marker)
     fingerprint = summary_fingerprint(client.messages(sid))
     batch = 0
     while batch < 14 and fingerprint is None:
         paths = [str(ROOT / ".tmp" / "live-fixtures" / f"data-{(batch*8+i)%64:02d}.txt") for i in range(8)]
-        client.turn(sid, "FILLER request: read these eight files with read_file, one call each, "
-                    "keeping the output in this conversation; reply only ACK and wait.\n" + "\n".join(paths))
+        text = ("FILLER request: read these eight files with read_file, one call each, "
+                "keeping the output in this conversation; reply only ACK and wait.\n" + "\n".join(paths))
+        client.turn(sid, text)
+        requests.append(text)
         batch += 1
-        fingerprint = summary_fingerprint(client.messages(sid))
+        active = client.messages(sid)
+        fingerprint = summary_fingerprint(active)
     emit("compacted", sid=sid, filler_batches=batch, fingerprint=fingerprint)
     assert fingerprint is not None, "no compaction observed"
+    retained = [m.get("content") for m in active if m.get("role") == "user"]
+    exact = all(text in retained for text in requests[-3:])
+    emit("retention", sid=sid, latest_three_exact=exact,
+         request_sha256=[hashlib.sha256(text.encode()).hexdigest() for text in requests[-3:]])
+    assert exact, "a recent user request disappeared from active user rows"
     question = ("Question about work earlier in THIS session: in detail-B.txt that you read before, "
                  "what is the first word on line 87? Answer with that word only — do not guess; "
                  "if the detail is not in your current context, look it up in the archived history.")
     answer, _ = client.turn(sid, question)
-    passed = marker in answer
-    emit("archive_recall", sid=sid, expected=marker, observed=answer[:200], passed=passed)
-    STATE.write_text(json.dumps({"sid": sid, "marker": marker, "filler_batches": batch},
-                                ensure_ascii=False, indent=2))
-    assert passed, "bot did not recover the archived line-87 word"
+    passed = answer.strip() == marker
+    active = client.messages(sid)
+    search_rows = [m for m in active if m.get("role") == "tool" and m.get("tool_name") == "session_search"]
+    searched = bool(search_rows)
+    emit("archive_recall", sid=sid, expected=marker, observed=answer[:200], passed=passed,
+         session_search_called=searched, session_search_rows=[m.get("id") for m in search_rows])
+    STATE.write_text(json.dumps({"sid": sid, "marker": marker, "filler_batches": batch,
+                                "latest_requests": requests[-3:], "latest_three_exact": exact,
+                                "answer_exact": passed, "session_search_called": searched},
+                               ensure_ascii=False, indent=2))
+    assert searched, "bot did not call session_search after compaction"
+    assert passed, "bot did not recover the archived line-87 word exactly"
     emit("completed", phase="archive", sid=sid, compactions=1, filler_batches=batch)
 
 

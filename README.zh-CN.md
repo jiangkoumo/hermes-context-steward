@@ -108,7 +108,7 @@ plugins:
 
 已在**干净上游代码**（无本地补丁）上验证：v0.23.0 `2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19`
 与 `main` `90d6b98f`（2026-11-06）。两次均把干净源码放在 `PYTHONPATH` 最前、只复用宿主 venv：
-64 个测试全部通过，`hermes plugins validate` 通过且**无任何 warning**：
+66 个测试全部通过，`hermes plugins validate` 通过且**无任何 warning**：
 插件只 import 文档化模块（`agent.context_engine`、`agent.plugin_llm`、`hermes_cli.config`），
 不继承、不引用 Hermes 内部压缩器。
 
