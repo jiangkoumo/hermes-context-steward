@@ -15,4 +15,6 @@ def register(ctx):
     settings = context.get("steward")
     if settings is None:
         settings = {}
-    ctx.register_context_engine(steward.ContextSteward.from_settings(settings))
+    ctx.register_context_engine(steward.ContextSteward.from_settings(
+        settings, compression=config.get("compression"),
+    ))

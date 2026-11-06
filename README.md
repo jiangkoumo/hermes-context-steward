@@ -18,10 +18,14 @@ This is an independent implementation for Hermes, with no DS Bot code dependency
 | `checkpoint` | System instructions, structured handoff (goal, completed work, work in progress, files/commands/decisions, todo), the latest N user messages verbatim, and a protected recent tail with its tool calls/results. |
 | `fresh` | System instructions, a brief handoff, the latest N user messages verbatim, and the final completed assistant reply so those requests are not replayed. Older assistant/tool context is removed from the active request. |
 
+`check_ratio` inherits the profile's `compression.threshold` when omitted in
+`context.steward`, defaulting to `0.5` if neither is set.
 A `fresh` decision is downgraded to `checkpoint` if work/todos remain or the last
 message is not a completed assistant reply (including an active tool round or an
-unanswered user request). The default is to preserve 3 user messages, including
-spacing and newlines. Synthetic handoffs are not counted as human messages.
+unanswered user request). The default is to preserve 3 user messages, including spacing and newlines.
+User requests arriving under diagnostic ingress or internal presentation tags
+remain fully eligible as user messages; known synthetic recovery nudges and
+summary-only carriers are still excluded. Synthetic handoffs are not counted as human messages.
 
 The engine invokes Hermes's compression auxiliary channel once per successful
 judgment, reusing routing, credentials, timeouts, response validation and host route

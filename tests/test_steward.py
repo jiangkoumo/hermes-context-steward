@@ -65,6 +65,39 @@ class StewardTests(unittest.TestCase):
             self.assertIn(text, actual)
         self.assertEqual(self.messages, self.original)
 
+    def test_diagnostic_latest_unfinished_request_survives_long_tool_loop(self):
+        # The live api_server marks diagnostic ingress as internal_notification.
+        # Only the first three historical requests lack that presentation tag.
+        users = [m for m in self.messages if m["role"] == "user"]
+        for msg in users[3:]:
+            msg["display_kind"] = "internal_notification"
+        latest = users[-1]["content"]
+        for i in range(12):
+            self.messages.extend([
+                {"role": "assistant", "content": None, "tool_calls": [{
+                    "id": f"loop_{i}", "type": "function",
+                    "function": {"name": "terminal", "arguments": "{}"},
+                }]},
+                {"role": "tool", "tool_call_id": f"loop_{i}", "content": "tool details " * 100},
+            ])
+        self.original = copy.deepcopy(self.messages)
+        self.aux.return_value = response("fresh", goal=f"Still processing {latest}")
+        e = engine()
+        result = e.compress(self.messages)
+        self.assertEqual(e.last_outcome, "compacted")
+        self.assertEqual(e.last_mode, "checkpoint")
+        retained = [m.get("content") for m in result if m.get("role") == "user"]
+        self.assertIn(latest, retained, "latest unfinished request must survive outside the summary")
+        for msg in users[-3:]:
+            self.assertIn(msg["content"], retained)
+        carrier = next(m for m in result if is_compaction_summary_message(m))
+        self.assertNotIn("## Unfinished User Request Restatement", carrier["content"])
+        self.assertNotIn("request 2:", carrier["content"])
+        for msg in self.messages[-6:]:
+            self.assertTrue(any(m.get("content") == msg.get("content") and
+                                m.get("tool_call_id") == msg.get("tool_call_id") for m in result))
+        self.assertEqual(self.messages, self.original)
+
     def test_contract_and_exact_half_window(self):
         e = engine()
         self.assertIsInstance(e, ContextEngine)
@@ -309,12 +342,15 @@ class StewardTests(unittest.TestCase):
             "## Active State\nWorking on tests\n## Key Decisions\nKeep API stable"
         )}}]}
         self.aux.side_effect = [bad, good]
-        e = engine(keep_user_messages=1)
+        e = engine(keep_user_messages=3)
         result = e.compress(self.messages, force=True)
         self.assertEqual(e.last_mode, "checkpoint")
         self.assertEqual(e.last_outcome, "parent_fallback")
         self.assertLess(estimate_messages_tokens_rough(result), estimate_messages_tokens_rough(self.messages))
-        self.assert_quotes(result, 1)
+        self.assert_quotes(result, 3)
+        for protected in self.messages[-6:]:
+            self.assertTrue(any(m.get("role") == protected.get("role") and
+                                m.get("content") == protected.get("content") for m in result))
         self.assertEqual(self.aux.call_count, 2)
 
     def test_config_validation(self):

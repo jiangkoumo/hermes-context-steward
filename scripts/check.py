@@ -6,6 +6,8 @@ import argparse
 import os
 from pathlib import Path
 import sys
+import tempfile
+import shutil
 import unittest
 
 
@@ -34,7 +36,14 @@ def main():
             return 1
     from hermes_cli.plugin_validate import validate_plugin_dir
 
-    report = validate_plugin_dir(root)
+    # Validate the distributable tree. Local live-test data, logs and private
+    # profile backups are not plugin payload and must not enter the scan/probe.
+    with tempfile.TemporaryDirectory(dir=root / ".tmp") as staging:
+        payload = Path(staging) / "context-steward"
+        shutil.copytree(root, payload, ignore=shutil.ignore_patterns(
+            ".git", ".tmp", ".test-hermes", "__pycache__", "*.py[cod]", ".pytest_cache",
+        ))
+        report = validate_plugin_dir(payload)
     for name, ok, detail in report.checks:
         print(f"{'PASS' if ok else 'FAIL'} {name}: {detail}")
     for warning in report.warnings:

@@ -21,6 +21,7 @@ from agent.context_compressor import (
     _COMPACTION_TAIL_MARKER,
     _SUMMARY_END_MARKER,
     user_originated_turn_view,
+    split_user_originated_turn,
 )
 from agent.context_engine import sanitize_memory_context
 from agent.model_metadata import estimate_messages_tokens_rough
@@ -105,13 +106,16 @@ class ContextSteward(ContextCompressor):
         )
 
     @classmethod
-    def from_settings(cls, settings):
+    def from_settings(cls, settings, *, compression=None):
         if not isinstance(settings, dict):
             raise ValueError("context.steward must be a mapping")
         unknown = set(settings) - {"check_ratio", "keep_user_messages", "verdict_model"}
         if unknown:
             raise ValueError("unknown context.steward setting")
-        return cls(**settings)
+        options = dict(settings)
+        if "check_ratio" not in options and isinstance(compression, dict) and "threshold" in compression:
+            options["check_ratio"] = compression["threshold"]
+        return cls(**options)
 
     @property
     def name(self):
@@ -188,9 +192,35 @@ class ContextSteward(ContextCompressor):
             f"FOCUS:\n{scrub(focus_topic or '')[:2000]}"
         )
 
+    @classmethod
+    def _is_actionable_user_turn(cls, message):
+        if not isinstance(message, dict):
+            return False
+        candidate = dict(message)
+        candidate.pop("display_kind", None)
+        candidate.pop("display_metadata", None)
+        # Apply the same presentation-independent policy inside parent tail
+        # planning and finalization, not only our own anchor selection.
+        return super()._is_actionable_user_turn(candidate)
+
+    def _user_view(self, message):
+        view = user_originated_turn_view(message)
+        if view is not None:
+            return view
+        if message.get("role") != "user" or self._is_context_summary_message(message):
+            return None
+        # display_kind describes presentation, not reliable ingress provenance.
+        # api_server diagnostic requests are tagged internal_notification too.
+        # Retain conservatively, but still reject known recovery nudges, blank
+        # echoes, TODO scaffolding, and summary-only carriers by content.
+        candidate = dict(message)
+        candidate.pop("display_kind", None)
+        candidate.pop("display_metadata", None)
+        return candidate if self._is_real_user_turn(candidate) else None
+
     def _user_indices(self, messages):
         return [i for i, msg in enumerate(messages)
-                if user_originated_turn_view(msg) is not None][-self.keep_user_messages:]
+                if self._user_view(msg) is not None][-self.keep_user_messages:]
 
     def _retained_indices(self, messages, mode):
         users = self._user_indices(messages)
@@ -229,12 +259,21 @@ class ContextSteward(ContextCompressor):
             available.pop(match)  # repeated identical user messages remain distinct
         return True
 
+    def _tail_survives(self, messages, result, mode="checkpoint"):
+        fields = ("role", "content", "tool_calls", "tool_call_id")
+        protected = messages[-1:] if mode == "fresh" else messages[-self.protect_last_n:]
+        expected = [tuple(m.get(k) for k in fields) for m in protected]
+        actual = [tuple(m.get(k) for k in fields) for m in result[-len(protected):]]
+        return actual == expected
+
     def _preserve(self, messages, previous_state):
         self._previous_summary, self.compression_count = previous_state
         self._last_compression_made_progress = False
         self._last_compress_aborted = True
         self.last_mode, self.last_outcome = "checkpoint", "preserved"
         self._record_structural_no_op("steward could not safely shrink context", len(messages))
+        log.info("Context steward preserved: session=%s messages=%d retained_users=%d",
+                 self._session_id, len(messages), len(self._user_indices(messages)))
         return messages
 
     def _fallback_checkpoint(self, messages, current_tokens, focus_topic, force,
@@ -253,12 +292,24 @@ class ContextSteward(ContextCompressor):
         except Exception:
             # Never log provider exceptions: their strings can contain credentials.
             return self._preserve(messages, previous_state)
-        # The parent can prune user media or fold summary carriers. A fallback is
-        # accepted only if every required recent user's exact content survived.
-        if not self._quotes_survive(messages, result):
+        # The default compressor may fold a handoff into the first tail user.
+        # Split its reference and live input back into separate rows so the
+        # protected user's exact text remains independently addressable.
+        expanded = []
+        for msg in result:
+            handoff, live = split_user_originated_turn(msg)
+            if handoff is not None and live is not None:
+                expanded.extend((handoff, live))
+            else:
+                expanded.append(msg)
+        result = expanded
+        # A fallback must preserve both user anchors and the promised tail.
+        if not self._quotes_survive(messages, result) or not self._tail_survives(messages, result):
             return self._preserve(messages, previous_state)
         if estimate_messages_tokens_rough(result) >= estimate_messages_tokens_rough(messages):
             return self._preserve(messages, previous_state)
+        log.info("Context steward parent fallback compacted: session=%s messages=%d->%d",
+                 self._session_id, len(messages), len(result))
         return result
 
     def compress(self, messages, current_tokens=None, focus_topic=None, force=False,
@@ -290,7 +341,8 @@ class ContextSteward(ContextCompressor):
             raise
         except Exception:
             _raise_if_stale_attempt(self)
-            log.warning("Context steward judgment unavailable; using safe checkpoint fallback")
+            log.warning("Context steward judgment unavailable; using safe checkpoint fallback session=%s",
+                        self._session_id)
             return self._fallback_checkpoint(
                 messages, current_tokens, focus_topic, force, memory_context, bypass_cooldown,
             )
@@ -320,12 +372,17 @@ class ContextSteward(ContextCompressor):
         _raise_if_stale_attempt(self)
         self._summary_has_user_turn = bool(self._user_indices(messages))
         result = self._finalize_compressed(candidate, copy.deepcopy(messages), len(messages), True)
-        # Finalization may alter multimodal user messages. Fail closed on that too.
-        if not self._quotes_survive(messages, result):
+        # Finalization may alter multimodal or tool payloads. Fail closed on that too.
+        if not self._quotes_survive(messages, result) or not self._tail_survives(messages, result, mode):
             return self._preserve(messages, previous_state)
         if estimate_messages_tokens_rough(result) >= estimate_messages_tokens_rough(messages):
             return self._preserve(messages, previous_state)
         _raise_if_stale_attempt(self)
         self._record_summary_success(body)
         self.last_mode, self.last_outcome = mode, "compacted"
+        log.info("Context steward compacted: session=%s mode=%s count=%d messages=%d->%d "
+                 "tokens=%d->%d retained_users=%d threshold=%d", self._session_id, mode,
+                 self.compression_count, len(messages), len(result),
+                 estimate_messages_tokens_rough(messages), estimate_messages_tokens_rough(result),
+                 len(self._user_indices(messages)), self.threshold_tokens)
         return result
