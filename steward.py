@@ -400,6 +400,7 @@ class ContextSteward(ContextEngine):
         self.model = model
         self.check_ratio = float(check_ratio)
         self.threshold_percent = self.check_ratio
+        self.threshold_tokens_cap = None
         self.keep_user_messages = keep_user_messages
         self.verdict_route = verdict_route or ModelRoute()
         self.summary_route = summary_route or ModelRoute()
@@ -412,6 +413,78 @@ class ContextSteward(ContextEngine):
         self._structural_backoff_until = 0.0
         self._session_id = ""
         self._denied_variants: set = set()
+
+    # The Desktop/TUI live-config writer assumes ContextCompressor fields even
+    # for plugin engines. These are our own compatibility members, not imports
+    # or calls into core internals. Cache invalidation must actually re-derive
+    # the trigger on the next should_compress()/get_status() call.
+    @staticmethod
+    def _coerce_threshold_tokens_cap(value):
+        """Match the host: positive int-convertible cap, otherwise no cap."""
+        try:
+            cap = int(value) if value is not None else 0
+        except (TypeError, ValueError):
+            return None
+        return cap if cap > 0 else None
+
+    @staticmethod
+    def _effective_threshold_percent(context_length, threshold_percent):
+        """Keep the supplied ratio; this engine has no 75% small-window floor."""
+        return threshold_percent
+
+    @property
+    def check_ratio(self):
+        return self._config_threshold_percent
+
+    @check_ratio.setter
+    def check_ratio(self, value):
+        self._config_threshold_percent = float(value)
+        self.threshold_percent = self._config_threshold_percent
+
+    @property
+    def threshold_percent(self):
+        return self._threshold_percent
+
+    @threshold_percent.setter
+    def threshold_percent(self, value):
+        self._threshold_percent = value
+        self._threshold_tokens = None
+
+    @property
+    def context_length(self):
+        resolved = getattr(self, "_resolved_context_length", None)
+        # Clearing a live pin restores the window last supplied by update_model;
+        # resolving fresh model metadata remains the host's responsibility.
+        return resolved if resolved is not None else getattr(self, "_model_context_length", 0)
+
+    @context_length.setter
+    def context_length(self, value):
+        self._resolved_context_length = int(value or 0)
+        self._threshold_tokens = None
+
+    @property
+    def threshold_tokens_cap(self):
+        return getattr(self, "_threshold_tokens_cap", None)
+
+    @threshold_tokens_cap.setter
+    def threshold_tokens_cap(self, value):
+        self._threshold_tokens_cap = self._coerce_threshold_tokens_cap(value)
+        self._threshold_tokens = None
+
+    @property
+    def threshold_tokens(self):
+        if self._threshold_tokens is None:
+            window = self.context_length
+            trigger = max(1, int(window * self.threshold_percent))
+            cap = self.threshold_tokens_cap
+            if cap is not None:
+                trigger = min(trigger, cap, window) if window > 0 else min(trigger, cap)
+            self._threshold_tokens = trigger
+        return self._threshold_tokens
+
+    @threshold_tokens.setter
+    def threshold_tokens(self, value):
+        self._threshold_tokens = value
 
     @property
     def verdict_model(self) -> str:
@@ -441,7 +514,10 @@ class ContextSteward(ContextEngine):
         summary_route = parse_model_route(summary_raw, label="context.steward.summary")
         if "check_ratio" not in options and isinstance(compression, dict) and "threshold" in compression:
             options["check_ratio"] = compression["threshold"]
-        return cls(llm=llm, verdict_route=verdict_route, summary_route=summary_route, **options)
+        instance = cls(llm=llm, verdict_route=verdict_route, summary_route=summary_route, **options)
+        if isinstance(compression, dict):
+            instance.threshold_tokens_cap = compression.get("threshold_tokens")
+        return instance
 
     @property
     def name(self):
@@ -453,17 +529,22 @@ class ContextSteward(ContextEngine):
                            keep_user_messages=self.keep_user_messages,
                            verdict_route=self.verdict_route, summary_route=self.summary_route,
                            llm=self._llm)
-        clone.threshold_tokens = self.threshold_tokens
+        clone._model_context_length = getattr(self, "_model_context_length", self.context_length)
+        clone._config_context_length = getattr(self, "_config_context_length", None)
         clone.context_length = self.context_length
+        clone.threshold_percent = self.threshold_percent
+        clone.threshold_tokens_cap = self.threshold_tokens_cap
+        clone.threshold_tokens = self.threshold_tokens
         return clone
 
     # ------------------------------------------------------------------ host contract
 
     def update_model(self, model, context_length, base_url="", api_key="", provider="", api_mode=""):
         self.model = model or ""
-        self.context_length = int(context_length or 0)
+        self._model_context_length = int(context_length or 0)
+        self._config_context_length = None
+        self.context_length = self._model_context_length
         self.threshold_percent = self.check_ratio
-        self.threshold_tokens = max(1, int(self.context_length * self.check_ratio))
 
     def update_from_response(self, usage):
         usage = usage or {}

@@ -137,7 +137,7 @@ original transcript is returned unchanged.
 Verified against **clean upstream checkouts** (no local patches) of
 `NousResearch/hermes-agent`: v0.23.0 at `2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19`
 (the declared minimum) and `main` at `90d6b98f` (2026-11-06). In both, with the clean
-source first on `PYTHONPATH` and only the host venv reused, all 66 tests pass and
+source first on `PYTHONPATH` and only the host venv reused, all 76 tests pass and
 `hermes plugins validate` passes with **no warnings** — the plugin imports only
 documented modules (`agent.context_engine`, `agent.plugin_llm`, `hermes_cli.config`)
 and does not subclass or import Hermes's internal compressor.
@@ -188,10 +188,15 @@ To switch back, set `context.engine: compressor`.
 | `verdict_model` | `""` | Optional model name on the existing compression auxiliary route. Change its provider/auth through Hermes's `auxiliary.compression` settings. |
 
 Invalid settings fail plugin loading visibly rather than silently taking different
-values. `compression.model_thresholds` is intentionally ignored: the steward owns
-its check line. A supplied output-token reservation caps the threshold below the
-usable input window. Hermes's `compression.enabled` still controls automatic
-compression. Manual `/compress` also uses this engine and respects a focus topic.
+values. Desktop/TUI live config saves adopt the effective ratio resolved by the
+host (including its `compression.model_thresholds`), the new `model.context_length`
+and the absolute `compression.threshold_tokens` cap. The next check recomputes
+`window × ratio`, limited by a positive cap clamped to that window; null or
+non-positive caps mean ratio-only, and removing the key restores the host default.
+There is still no 75% small-window floor. Clearing a live window pin restores the
+last window supplied through public `update_model`, without a metadata lookup.
+Hermes's `compression.enabled` controls automatic compression. Manual `/compress`
+also uses this engine and respects a focus topic.
 Keep background `compression.prepare_ahead` and micro-compaction disabled (the
 Hermes defaults); those inherited features do not run the steward judgment.
 

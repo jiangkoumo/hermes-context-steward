@@ -1,6 +1,6 @@
 # Publishing to the Hermes plugin catalog
 
-Target listing: **context-steward 0.4.0** —
+Target listing: **context-steward 0.4.1** —
 `https://github.com/jiangkoumo/hermes-context-steward`, maintainer `jiangkoumo`,
 `tier: community`, `category: memory`.
 
@@ -50,7 +50,7 @@ did.
 2. Clean-release verification is **done** and must be repeated for any later pin
    change. Against clean upstream checkouts of v0.23.0 (`2bd378ed`) and `main`
    (`90d6b98f`), with the clean source first on `PYTHONPATH` and only the host venv
-   reused: 66/66 tests pass and `hermes plugins validate` passes with **no
+   reused: 76/76 tests pass and `hermes plugins validate` passes with **no
    warnings** (no private imports, no core override, security scan `safe`). The
    plugin does **not** depend on the local checkout's uncommitted patches.
 3. Keep `plugin.yaml`'s name, version and `requires_hermes` accurate. The current
@@ -194,6 +194,16 @@ duplication and let this plugin (and future ones) rely fully on documented API.
    should not do that. A `make_plugin_llm(plugin_id)` factory (or `.llm` on the
    context-engine context) would make the documented path available to every
    engine.
+4. **A public live-config notification for external engines.**
+   `tui_gateway/session_compression.py::_apply_live_compression_config` currently
+   assumes every engine has the built-in compressor's fields and private methods.
+   It should dispatch to the external engine's public `update_model` or an
+   `on_config_change` hook instead of writing its internals. Version 0.4.1 supplies
+   two same-named, plugin-owned compatibility methods and threshold/window/cache
+   properties solely because that writer otherwise raises or leaves a stale
+   trigger. They import no private symbols. On clearing a live context pin the
+   plugin restores the last public `update_model` window; resolving new model
+   metadata should remain a host responsibility.
 
 ## Current status / 当前状态
 
@@ -205,7 +215,7 @@ Ready for the operator to publish. Nothing below has been done yet —
 - No catalog PR has been opened against `NousResearch/hermes-agent`.
 - Nothing from this preparation was installed into or enabled on a user's profile;
   the four production profiles still run the previously installed plugin copy.
-- Verification done: 66/66 tests and `hermes plugins validate` pass with zero
+- Verification done: 76/76 tests and `hermes plugins validate` pass with zero
   warnings against clean upstream v0.23.0 (`2bd378ed`) and clean `main`
   (`90d6b98f`), and the live test bot run passed for the 0.3.0 code.
 - Remaining before merge: publish + pin the SHA, rerun

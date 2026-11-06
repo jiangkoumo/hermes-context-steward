@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.4.1 — 2026-11-06
+
+- Fix Desktop/TUI live compression config updates: the host calls compressor-shaped
+  methods on external context engines too. The plugin now provides its own
+  `_coerce_threshold_tokens_cap` and `_effective_threshold_percent` compatibility
+  methods, with no private core imports.
+- Adopt live changes to `compression.threshold`, `model.context_length` and the
+  absolute `compression.threshold_tokens` cap immediately on the next check.
+  Invalidation of the host-written trigger cache now actually recomputes the ratio
+  and window; small windows still have no 75% floor. Positive integer-convertible
+  caps follow the upstream normalisation and window clamp; unset/null caps revert
+  to the host default or ratio-only behaviour.
+- Model updates and per-agent clones keep the hot-reloaded ratio and cap. Removing
+  a live window pin restores the last window supplied through public `update_model`
+  without a private metadata lookup.
+- Regression tests execute the real upstream `_apply_live_compression_config`,
+  covering repeated hot reloads, usage boundaries, cap removal, window-pin removal
+  and clone isolation on local, clean v0.23.0 and clean main.
+
 ## 0.4.0 — 2026-11-06
 
 - **Choose the compression model.** `context.steward.verdict` and

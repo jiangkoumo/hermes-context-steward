@@ -108,7 +108,7 @@ plugins:
 
 已在**干净上游代码**（无本地补丁）上验证：v0.23.0 `2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19`
 与 `main` `90d6b98f`（2026-11-06）。两次均把干净源码放在 `PYTHONPATH` 最前、只复用宿主 venv：
-66 个测试全部通过，`hermes plugins validate` 通过且**无任何 warning**：
+76 个测试全部通过，`hermes plugins validate` 通过且**无任何 warning**：
 插件只 import 文档化模块（`agent.context_engine`、`agent.plugin_llm`、`hermes_cli.config`），
 不继承、不引用 Hermes 内部压缩器。
 
@@ -146,8 +146,11 @@ context:
 | `verdict_model` | `""` | 可选裁决模型名；需 `plugins.entries.context-steward.llm.allow_model_override: true` 才生效。 |
 
 拼错键、非法值会让插件加载失败，不会偷偷用其他值代替。
-`compression.model_thresholds` 不覆盖管家的检查线。
-如果宿主传入输出 token 预留，检查线会限制在可用输入窗口以内。
+Desktop/TUI 热保存配置后会采纳宿主解析的有效比例（含 `compression.model_thresholds`）、
+新 `model.context_length` 和绝对上限 `compression.threshold_tokens`；下一次判断重新计算
+“窗口 × 比例”，再取与正整数上限的较小值（上限限制在窗口以内）。null 或非正数表示只看比例，
+删除上限键则恢复宿主默认值。仍不把小窗口阈值抬到 75%。移除窗口 pin 时恢复最近一次
+公开 `update_model` 提供的窗口，不私下查询模型元数据。
 `compression.enabled` 仍决定是否自动压缩；手动 `/compress` 同样经过本插件，并传入关注主题。
 请保持 `compression.prepare_ahead` 和微压缩关闭（Hermes 默认值）；继承的这些功能不经过管家裁决。
 

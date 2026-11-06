@@ -22,7 +22,7 @@ maintainer: jiangkoumo
 tier: community
 category: memory
 requires_hermes: ">=0.23.0"
-version: "0.4.0"
+version: "0.4.1"
 readme: true
 known_issues:
   - "Runs its judgment on the session model unless plugins.entries.context-steward.llm.allow_task_override is set (then auxiliary.compression)."
