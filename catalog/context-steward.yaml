@@ -22,10 +22,11 @@ maintainer: jiangkoumo
 tier: community
 category: memory
 requires_hermes: ">=0.23.0"
-version: "0.2.0"
+version: "0.3.0"
 readme: true
 known_issues:
-  - "Uses internal ContextCompressor helper/metadata APIs; the validator reports a private-imports warning and a Hermes release could rename them."
+  - "Runs its judgment on the session model unless plugins.entries.context-steward.llm.allow_task_override is set (then auxiliary.compression)."
+  - "Handoff formatting relies on Hermes's long-lived summary prefix/end-marker text; a change upstream needs a plugin update."
 capabilities:
   provides_tools: []
   provides_hooks: []

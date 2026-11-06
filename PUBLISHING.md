@@ -1,6 +1,6 @@
 # Publishing to the Hermes plugin catalog
 
-Target listing: **context-steward 0.2.0** —
+Target listing: **context-steward 0.3.0** —
 `https://github.com/jiangkoumo/hermes-context-steward`, maintainer `jiangkoumo`,
 `tier: community`, `category: memory`.
 
@@ -50,9 +50,9 @@ did.
 2. Clean-release verification is **done** and must be repeated for any later pin
    change. Against clean upstream checkouts of v0.23.0 (`2bd378ed`) and `main`
    (`90d6b98f`), with the clean source first on `PYTHONPATH` and only the host venv
-   reused: 55/55 tests pass and `hermes plugins validate` passes, with one
-   private-imports warning disclosed below. The plugin does **not** depend on the
-   local checkout's uncommitted patches.
+   reused: 45/45 tests pass and `hermes plugins validate` passes with **no
+   warnings** (no private imports, no core override, security scan `safe`). The
+   plugin does **not** depend on the local checkout's uncommitted patches.
 3. Keep `plugin.yaml`'s name, version and `requires_hermes` accurate. The current
    minimum `>=0.23.0` is a SemVer floor, not a calendar date. Do not claim a newer
    minimum than the released Hermes version. Dependency list is empty: the plugin
@@ -122,17 +122,27 @@ by Hermes's auxiliary channel, not declared as this plugin's keys.
 
 ## Review disclosures / 需向审阅者披露
 
-- Every handoff carrier (checkpoint, fresh, and the parent fallback) ends with a
+- Every handoff carrier (checkpoint, fresh, and the mechanical fallback) ends with a
   plugin-owned hint telling the model to call the built-in `session_search` tool
   when a needed detail is not in the handoff, instead of guessing. It is text only:
   no extra network egress, no additional LLM call, and it reads the session history
   through Hermes's own documented tool.
-- Pure context-engine registration and subclassing; no core source edits,
-  function rebinding, registry mutation or runtime monkey patch.
-- Network traffic uses Hermes's existing `auxiliary.compression` route. It sends
-  bounded conversation samples, recent messages, previous handoff and optional
-  memory, with forced redaction. It inherits Hermes routing/retries/timeouts;
-  parent fallback may make further summary calls. No hardcoded credentials.
+- Pure context-engine registration built on documented plugin surfaces only:
+  `agent.context_engine` (the engine contract), `agent.plugin_llm` (the host-owned
+  LLM facade) and `hermes_cli.config` (settings). No Hermes internal module is
+  imported, no core function is rebound, and the admission validator reports **no
+  warnings** — including no private-import warning.
+- One judgment call per compaction, through the host LLM facade. Routing, auth,
+  timeouts, retries and fallbacks stay host-owned; no credentials are read or
+  stored. By default the call runs on the session's active model. Routing it
+  through the built-in `auxiliary.compression` slot is opt-in:
+  `plugins.entries.context-steward.llm.allow_task_override: true`
+  (`verdict_model` additionally needs `allow_model_override`). This fail-closed
+  gate is Hermes's own plugin-LLM policy, not the plugin's.
+- Egress redaction is implemented inside the plugin (the host redactor is not a
+  public module). It over-redacts: PEM blocks, known key prefixes, bearer tokens,
+  credential-shaped assignments and CLI flags, URL userinfo and credential query
+  parameters. The host redactor would be stronger; see the API proposals below.
 - Reads settings through Hermes's config API; no direct credential-store/file
   reads, keychain access, shell execution, background service, telemetry or
   plugin-owned persistent store. The host handles transcript archive/commit.
@@ -140,24 +150,40 @@ by Hermes's auxiliary channel, not declared as this plugin's keys.
   Arbitrary unlabeled or transformed secrets cannot be perfectly recognized by
   shape-based redaction. Successful handoffs are lossy; old records remain in
   Hermes's searchable archive.
-- The real validator reports `security scan: safe` and `no core override: pass`,
-  but warns about **private core imports**. The documented ContextEngine and
-  ContextCompressor extension design still uses internal helper/metadata APIs:
-  auxiliary cancellation, compression summary/tail markers, message token
-  estimates, redaction, and the stale-attempt gate. The development check runner
-  also imports the validator. These imports are compatibility dependencies, not
-  monkey patches. The manifest minimum cannot make private APIs stable.
-- Catalog rule 9 says public surfaces only. Its validator currently treats
-  these imports as warnings, leaving human review necessary. A maintainer may
-  require a public helper seam or an upstream API change before admitting this
-  plugin. Do not hide the warning, claim unconditional market readiness, or
-  bypass review. If requested, open an API proposal in separately authorized
-  work; this task changes no Hermes core.
-- Automated tests do not establish live model judgment quality. One live run on an
-  isolated local test bot (v0.23.0 checkout, local model route) did verify the
-  archive hint end to end: after compaction, a question answerable only from the
-  archived tool output made the model call `session_search` and answer exactly.
-  That is one model and one environment, not a guarantee for every model.
+- Deliberate behaviour differences from the built-in compressor: no historical
+  image-to-placeholder rewrite, no built-in proactive tool-result pruning, no
+  second-model summary retry (a failed judgment becomes a mechanical checkpoint),
+  and the host's unlabelled continuation nudges can occupy a retained slot. Tool
+  calls/results are kept paired and orphans dropped, and no completed work is ever
+  invented.
+- Compatibility text, not an import: the persisted summary carrier starts with
+  Hermes's long-lived `[CONTEXT SUMMARY]:` prefix and ends with the host's summary
+  end marker, both copied as literals and asserted equal to the host constants by
+  the test suite. If upstream changes either string, this plugin needs a matching
+  update — see the API proposals below.
+- Automated tests do not establish live model judgment quality. Two live runs on an
+  isolated local test bot (v0.23.0 checkout, local model route) verified compaction
+  and the archive hint end to end: after compaction, a question answerable only from
+  the archived tool output made the model call `session_search` and answer exactly.
+  That is one model in one environment, not a guarantee for every model.
+
+## Optional upstream API proposals / 可选的上游接口提案
+
+None of these are filed; they are the public seams that would remove the remaining
+duplication and let this plugin (and future ones) rely fully on documented API.
+
+1. **A public summary-carrier helper.** `SUMMARY_PREFIX` / the end marker live in
+   `agent.context_compressor`; a context engine that writes its own handoff must
+   duplicate the two literals to stay recognisable after a restart. A public
+   builder (prefix + marker + metadata key) would remove that coupling.
+2. **A public redactor.** `agent.redact.redact_sensitive_text` is internal, so
+   plugins that cross an egress boundary re-implement a weaker version.
+3. **A plugin-LLM factory usable without a `PluginContext`.** Directory-discovered
+   context engines receive a minimal context without `.llm`; constructing
+   `PluginLlm(plugin_id=...)` directly works but its own docstring says plugins
+   should not do that. A `make_plugin_llm(plugin_id)` factory (or `.llm` on the
+   context-engine context) would make the documented path available to every
+   engine.
 
 ## Current status / 当前状态
 
@@ -169,10 +195,10 @@ Ready for the operator to publish. Nothing below has been done yet —
 - No catalog PR has been opened against `NousResearch/hermes-agent`.
 - Nothing from this preparation was installed into or enabled on a user's profile;
   the four production profiles still run the previously installed plugin copy.
-- Verification done: 55/55 tests and `hermes plugins validate` pass against clean
-  upstream v0.23.0 (`2bd378ed`) and clean `main` (`90d6b98f`); one warning
-  (private core imports) remains and is disclosed above.
+- Verification done: 45/45 tests and `hermes plugins validate` pass with zero
+  warnings against clean upstream v0.23.0 (`2bd378ed`) and clean `main`
+  (`90d6b98f`), and the live test bot run passed for the 0.3.0 code.
 - Remaining before merge: publish + pin the SHA, rerun
   `hermes plugins validate … --install-deps` at that pin, then submit the entry for
-  maintainer review. Admission is not automatic; the private-import dependency is
-  the item most likely to be challenged.
+  maintainer review. Admission is not automatic. Likely review questions are the
+  compatibility literals and the opt-in aux routing, both disclosed above.

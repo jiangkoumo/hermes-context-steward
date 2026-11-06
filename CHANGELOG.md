@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.3.0 — 2026-11-06
+
+- **No internal Hermes imports.** The engine no longer subclasses or imports the
+  built-in `ContextCompressor`; it implements the documented `ContextEngine`
+  contract itself and talks to the model through the documented plugin LLM facade
+  (`agent.plugin_llm`, i.e. `ctx.llm`). `hermes plugins validate` now passes with
+  **zero warnings** (previously: "private core imports").
+- **Opt-in aux routing.** The judgment runs on the session's active model by
+  default. `plugins.entries.context-steward.llm.allow_task_override: true` routes it
+  through `auxiliary.compression`; `verdict_model` needs `allow_model_override`.
+- **Self-contained safeguards** replace the parent class: own token estimate,
+  own egress redaction, own tool-pair sanitisation, own cooldown/backoff and stale
+  attempt guard. A failed or unusable judgment now degrades to a mechanical
+  checkpoint (archived old turns plus a pointer to `session_search`) that keeps the
+  recent user turns and the protected tail verbatim.
+- Handoff formatting uses Hermes's long-lived `[CONTEXT SUMMARY]:` prefix and end
+  marker as compatibility literals (asserted equal to the host constants by tests).
+- Verified on clean upstream v0.23.0 (`2bd378ed`) and clean `main` (`90d6b98f`):
+  45/45 tests and a warning-free validation; live test-bot compaction + archive
+  recall passed.
+
 ## 0.2.0 — 2026-11-06
 
 - Every handoff carrier (`checkpoint`, `fresh`, and the parent-compressor fallback) now

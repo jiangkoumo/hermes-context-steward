@@ -35,15 +35,26 @@ User requests arriving under diagnostic ingress or internal presentation tags
 remain fully eligible as user messages; known synthetic recovery nudges and
 summary-only carriers are still excluded. Synthetic handoffs are not counted as human messages.
 
-The engine invokes Hermes's compression auxiliary channel once per successful
-judgment, reusing routing, credentials, timeouts, response validation and host route
-pins. Provider-level retries/fallbacks may still happen inside Hermes. No provider,
-endpoint or key is hardcoded. The judgment reads bounded samples of older records
-and the most recent 24 messages, plus the previous handoff and optional memory.
-It never sends a million-token transcript to the auxiliary model. After a process
-restart or session resume, the previous handoff is recovered separately from the
-persisted summary carrier, without ordinary record sampling or truncation. An
-oversized legacy handoff falls back to the parent instead of being silently cut.
+The engine makes its one judgment call through Hermes's plugin LLM facade
+(`ctx.llm`, or the same `agent.plugin_llm` object when a directory-installed engine
+has no plugin context). Provider choice, credentials, timeouts and retries stay
+host-owned. By default the call runs on the session's active model; to route it
+through the cheaper `auxiliary.compression` slot instead, grant the task override:
+
+```yaml
+plugins:
+  entries:
+    context-steward:
+      llm:
+        allow_task_override: true   # judgment uses auxiliary.compression
+```
+
+`verdict_model` is only applied when `allow_model_override: true` is granted too;
+otherwise the host's own route wins. Nothing is hardcoded. The judgment reads
+bounded samples of older records and the most recent 24 messages, plus the previous
+handoff and optional memory; it never sends a million-token transcript. After a
+restart or a resumed session the previous handoff is recovered from the persisted
+carrier, without ordinary record sampling or truncation.
 
 The model must return structured JSON:
 
@@ -60,29 +71,32 @@ The model must return structured JSON:
 }
 ```
 
-An invalid mode with a valid handoff becomes `checkpoint`. Malformed JSON or an
-unusable handoff invokes the parent compressor's checkpoint path; an auxiliary
-exception does the same. That path can make additional summary calls. Its
-`abort_on_summary_failure=True` prevents a failed summary from replacing history
-with a static placeholder. Missing required user quotes, failure in the parent,
-or a replacement that does not shrink context keeps the original messages.
+An invalid mode with a valid handoff becomes `checkpoint`. Malformed JSON, an empty
+or unusable handoff, a timeout or any transport error degrades to a **mechanical
+checkpoint**: Hermes still archives the old turns, the retained user requests and
+the protected tail stay verbatim, and the handoff states only what was recovered
+deterministically (the pending request plus paths/commands/errors lifted from the
+transcript). Nothing is invented and nothing is dropped silently. If even that
+cannot shrink the context, or if the retained user text or tail would change, the
+original transcript is returned unchanged.
 
 ## Compatibility
 
 Verified against **clean upstream checkouts** (no local patches) of
 `NousResearch/hermes-agent`: v0.23.0 at `2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19`
 (the declared minimum) and `main` at `90d6b98f` (2026-11-06). In both, with the clean
-source first on `PYTHONPATH` and only the host venv reused, all 55 tests pass and
-`hermes plugins validate` passes with one disclosed warning (private core imports).
-No local-only core patch is required.
+source first on `PYTHONPATH` and only the host venv reused, all 45 tests pass and
+`hermes plugins validate` passes with **no warnings** — the plugin imports only
+documented modules (`agent.context_engine`, `agent.plugin_llm`, `hermes_cli.config`)
+and does not subclass or import Hermes's internal compressor.
 
 A live end-to-end run on an isolated test bot (v0.23.0 checkout, local model route)
 confirmed the archive hint: after compaction, a question answerable only from the
 archived tool output made the model call `session_search` and answer exactly. That
 is one model in one environment, not a guarantee for every model.
 
-`requires_hermes: ">=0.23.0"` is a minimum, not a promise that future internal
-compressor helpers stay compatible; revalidate on upgrades. There are no extra
+`requires_hermes: ">=0.23.0"` is a minimum, not a promise that future plugin
+surfaces stay source-compatible; revalidate on upgrades. There are no extra
 Python dependencies.
 
 ## Install and activate (operator actions)
@@ -107,7 +121,7 @@ context:
   steward:
     check_ratio: 0.5
     keep_user_messages: 3
-    verdict_model: ""  # inherit auxiliary.compression's model/provider
+    verdict_model: ""  # optional; needs the allow_model_override grant below
 ```
 
 Directory context engines do **not** require a `plugins.enabled` entry. Only one
@@ -162,23 +176,22 @@ Verification against a clean upstream checkout (the catalog CI shape):
 
 That is how the results above were produced for `2bd378ed` and `90d6b98f`.
 
-The runner performs unit tests and the real `validate_plugin_dir` admission checks,
+`scripts/check.py` runs the unit tests and then the real
+`hermes plugins validate` as a subprocess (it never imports core modules itself),
 including the isolated registration probe, security scan and no-core-override
 check. It disables bytecode and lazy dependency installation and keeps mutable
 Hermes state and temporary files under `.test-hermes/` and `.tmp/` in this repo.
 It installs no dependencies, changes no user configuration and starts no service.
 `--validate-only` runs just admission validation.
 
-**What is real:** Python tests execute, the actual Hermes ABC/compressor/auxiliary
-adapter/loader are imported, and SQLite archive + FTS are exercised. **What is
-fake:** auxiliary model responses/network dispatch; some targeted fallback tests
-stub the parent to prove delegation or failure behavior. A separate test runs
-the real parent with a failing fake auxiliary call. The live bot check was a
-separate manual run, not part of this suite.
+**What is real:** Python tests execute, the actual Hermes ContextEngine contract,
+plugin LLM facade, config loader, directory loader and SQLite archive + FTS are
+exercised, and the admission validator runs end to end. **What is fake:** the
+judgment model's responses (a recorded stand-in for `ctx.llm`); no provider call is
+made from this suite. The live bot check was a separate manual run.
 
-The official validator passes but warns about imports of compressor internals.
-Those are subclass implementation dependencies, not runtime monkey patches. The
-warning is disclosed for catalog review; see [PUBLISHING.md](PUBLISHING.md).
+The validator reports **no warnings**: the runtime imports only documented modules
+and does not touch Hermes's internal compressor.
 
 `scripts/slimtest_live.py` is an opt-in maintainer harness that talks to a
 throwaway local gateway (`HERMES_SLIMTEST_HOME`, `HERMES_SLIMTEST_URL`); it is not
@@ -187,12 +200,20 @@ part of the plugin runtime and is never imported by it.
 ## Limits
 
 This is lossy compaction. Bounded sampling can miss older facts; search the session
-archive for exact details. Prompt token usage is inherited from Hermes, and rough
-estimates are used before real usage arrives and to reject growing candidates.
-Very large recent user messages or an active tool round can prevent a smaller
-replacement; preservation wins over truncation. Images/media receive Hermes's
-normal finalization, and a change to a required user's exact content causes the
-candidate to be rejected.
+archive for exact details. Prompt token usage comes from the host's real usage; a
+rough character-based estimate is used only for preflight and for rejecting
+growing candidates. Very large recent user messages or an active tool round can
+prevent a smaller replacement; preservation wins over truncation. A change to a
+required user's exact text or to the protected tail rejects the candidate.
+
+Compared with Hermes's built-in compressor this engine deliberately does less:
+it does not rewrite historical images into placeholders, does not run the built-in
+proactive tool-result pruning, and does not retry a failed summary on a second
+model (a failed judgment becomes a mechanical checkpoint instead). It does keep
+tool calls and results paired and drops orphans, and it never invents completed
+work. A host-injected continuation nudge that arrives as an ordinary `user` row can
+occupy one of the retained user slots; such rows are tiny and the original is still
+archived.
 
 `fresh` creates a logical context segment, not a new chat ID, UI tab, or explicit
 `/reset`; memory/session lifecycle remains owned by Hermes. The host decides
