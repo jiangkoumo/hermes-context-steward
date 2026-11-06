@@ -45,6 +45,51 @@ plugins:
 上次摘要和可选记忆；长消息有明确省略标记，不会把百万 token 原始会话全部发出。
 进程重启或恢复会话后，会从消息中的摘要载体单独恢复完整上次交接条，不混入普通抽样。
 
+## 自选压缩模型
+
+两个可选配置块，分别控制两个阶段；不写则完全沿用 Hermes 的 `auxiliary.compression`。
+
+```yaml
+context:
+  engine: context-steward
+  steward:
+    verdict:                    # 裁决 checkpoint / fresh
+      provider: magpie
+      model: opendesign/deepseek-v4.1-flash
+    summary:                    # 写交接摘要
+      provider: magpie
+      model: opendesign/glm-5.3-flash
+```
+
+- **只写一个块**：用作唯一一次合并调用。
+- **两块相同**：仍是一 次调用。
+- **两块不同**（provider 或 model）：两次调用——小模型只裁决模式，另一个写摘要。
+- 也接受字符串简写：`verdict_model: 某模型`（旧写法）或 `verdict: 某模型`。
+
+插件**不自己调 provider**：两个模型都由 Hermes 解析、鉴权和重试。因此还需要操作者授权，
+且名字必须存在于该 profile 自己的 provider 配置里：
+
+```yaml
+plugins:
+  entries:
+    context-steward:
+      llm:
+        allow_provider_override: true
+        allowed_providers: [magpie]
+        allow_model_override: true
+        allowed_models: [opendesign/deepseek-v4.1-flash, opendesign/glm-5.3-flash]
+```
+
+`base_url` 与 `api_key_env` 为与其他插件配置对称而保留，但 **Hermes 公开的插件 LLM 接口
+不支持**：它只接受 provider 名称，不接受自定 endpoint/密钥。填写时会在日志中明确警告并
+忽略。想用自己的端点，请在 `config.yaml` 里声明为 custom provider（由它拥有 URL 和密钥），
+再用 provider 名字引用。
+
+非法配置不静默：格式错误（未知键、只写 provider 不写 model、类型不对、`api_key_env`/
+`base_url` 格式错）会在加载时报错，由 Hermes 记录原因并回退到内置压缩器；provider 不存在
+或操作者未授权时，会记录一条指向具体配置键的 warning，并回退到下一条允许的路由
+（aux `compression` → 会话模型）。
+
 要求返回结构化 JSON，具体格式见英文 README。`handoff` 必须包含：
 
 - `goal`：非空字符串。
@@ -63,7 +108,7 @@ plugins:
 
 已在**干净上游代码**（无本地补丁）上验证：v0.23.0 `2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19`
 与 `main` `90d6b98f`（2026-11-06）。两次均把干净源码放在 `PYTHONPATH` 最前、只复用宿主 venv：
-45 个测试全部通过，`hermes plugins validate` 通过且**无任何 warning**：
+64 个测试全部通过，`hermes plugins validate` 通过且**无任何 warning**：
 插件只 import 文档化模块（`agent.context_engine`、`agent.plugin_llm`、`hermes_cli.config`），
 不继承、不引用 Hermes 内部压缩器。
 

@@ -56,6 +56,58 @@ handoff and optional memory; it never sends a million-token transcript. After a
 restart or a resumed session the previous handoff is recovered from the persisted
 carrier, without ordinary record sampling or truncation.
 
+## Choosing the compression model
+
+Two optional blocks set the model per phase. Leave them out and Hermes's
+`auxiliary.compression` route is used exactly as before.
+
+```yaml
+context:
+  engine: context-steward
+  steward:
+    verdict:                    # decides checkpoint vs fresh
+      provider: magpie
+      model: opendesign/deepseek-v4.1-flash
+    summary:                    # writes the handoff
+      provider: magpie
+      model: opendesign/glm-5.3-flash
+```
+
+- **One block** (either one) — it is used for the single combined judgment call.
+- **Both blocks, same provider+model** — still one call.
+- **Both blocks, different provider or model** — two calls: a small model decides the
+  mode, the second writes the handoff.
+- A plain string is accepted as shorthand for a model name:
+  `verdict_model: some-model` (legacy) or `verdict: some-model`.
+
+The plugin does **not** call providers itself: both models are resolved, authenticated
+and retried by Hermes. That means the operator must also grant the override, and the
+names must exist in the profile's own provider configuration:
+
+```yaml
+plugins:
+  entries:
+    context-steward:
+      llm:
+        allow_provider_override: true
+        allowed_providers: [magpie]
+        allow_model_override: true
+        allowed_models: [opendesign/deepseek-v4.1-flash, opendesign/glm-5.3-flash]
+```
+
+`base_url` and `api_key_env` exist for symmetry with other plugin settings but are
+**not supported** by Hermes's public plugin-LLM API: it accepts a provider *name*, not
+an endpoint or a key. Setting them logs a warning and they are ignored. To use your
+own endpoint, declare it once as a custom provider in `config.yaml` (it owns the URL
+and credential) and reference it by name.
+
+Bad configuration is never silent: a malformed block (unknown key, pre-set
+`provider` with an empty `model`, a non-string value, a bad `api_key_env` or
+`base_url`) raises at load, so Hermes logs the reason and falls back to the built-in
+compressor. An unknown provider, or a route the operator has not granted, logs a
+warning naming the exact key to add and falls back to the next permitted route
+(aux `compression`, then the session model).
+
 The model must return structured JSON:
 
 ```json
@@ -85,7 +137,7 @@ original transcript is returned unchanged.
 Verified against **clean upstream checkouts** (no local patches) of
 `NousResearch/hermes-agent`: v0.23.0 at `2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19`
 (the declared minimum) and `main` at `90d6b98f` (2026-11-06). In both, with the clean
-source first on `PYTHONPATH` and only the host venv reused, all 45 tests pass and
+source first on `PYTHONPATH` and only the host venv reused, all 64 tests pass and
 `hermes plugins validate` passes with **no warnings** — the plugin imports only
 documented modules (`agent.context_engine`, `agent.plugin_llm`, `hermes_cli.config`)
 and does not subclass or import Hermes's internal compressor.

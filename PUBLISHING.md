@@ -1,6 +1,6 @@
 # Publishing to the Hermes plugin catalog
 
-Target listing: **context-steward 0.3.0** —
+Target listing: **context-steward 0.4.0** —
 `https://github.com/jiangkoumo/hermes-context-steward`, maintainer `jiangkoumo`,
 `tier: community`, `category: memory`.
 
@@ -50,7 +50,7 @@ did.
 2. Clean-release verification is **done** and must be repeated for any later pin
    change. Against clean upstream checkouts of v0.23.0 (`2bd378ed`) and `main`
    (`90d6b98f`), with the clean source first on `PYTHONPATH` and only the host venv
-   reused: 45/45 tests pass and `hermes plugins validate` passes with **no
+   reused: 64/64 tests pass and `hermes plugins validate` passes with **no
    warnings** (no private imports, no core override, security scan `safe`). The
    plugin does **not** depend on the local checkout's uncommitted patches.
 3. Keep `plugin.yaml`'s name, version and `requires_hermes` accurate. The current
@@ -136,9 +136,19 @@ by Hermes's auxiliary channel, not declared as this plugin's keys.
   timeouts, retries and fallbacks stay host-owned; no credentials are read or
   stored. By default the call runs on the session's active model. Routing it
   through the built-in `auxiliary.compression` slot is opt-in:
-  `plugins.entries.context-steward.llm.allow_task_override: true`
-  (`verdict_model` additionally needs `allow_model_override`). This fail-closed
+  `plugins.entries.context-steward.llm.allow_task_override: true`. This fail-closed
   gate is Hermes's own plugin-LLM policy, not the plugin's.
+- Per-phase models are optional (`context.steward.verdict` / `.summary`: provider,
+  model). They are passed to the same host facade, so Hermes still resolves and
+  authenticates them; a different provider/model pair for the two phases makes two
+  calls (small model decides, the other writes the handoff). The plugin never builds
+  an HTTP client and never reads a key. Two consequences are documented in the
+  README and must be disclosed to reviewers: (a) the operator must also grant
+  `allow_provider_override` / `allow_model_override` (with the allowlists), and
+  (b) `base_url` / `api_key_env` cannot be honored by the public facade — they log a
+  warning and are ignored in favour of declaring a custom provider in Hermes config.
+  Structural config errors raise at load; unknown or ungranted routes log the exact
+  key to add and fall back to the next permitted route.
 - Egress redaction is implemented inside the plugin (the host redactor is not a
   public module). It over-redacts: PEM blocks, known key prefixes, bearer tokens,
   credential-shaped assignments and CLI flags, URL userinfo and credential query
@@ -195,7 +205,7 @@ Ready for the operator to publish. Nothing below has been done yet —
 - No catalog PR has been opened against `NousResearch/hermes-agent`.
 - Nothing from this preparation was installed into or enabled on a user's profile;
   the four production profiles still run the previously installed plugin copy.
-- Verification done: 45/45 tests and `hermes plugins validate` pass with zero
+- Verification done: 64/64 tests and `hermes plugins validate` pass with zero
   warnings against clean upstream v0.23.0 (`2bd378ed`) and clean `main`
   (`90d6b98f`), and the live test bot run passed for the 0.3.0 code.
 - Remaining before merge: publish + pin the SHA, rerun

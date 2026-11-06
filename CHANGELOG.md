@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.0 — 2026-11-06
+
+- **Choose the compression model.** `context.steward.verdict` and
+  `context.steward.summary` accept `provider` / `model` (plus `base_url` /
+  `api_key_env` for symmetry, which the public facade cannot honor and logs as
+  ignored). One block drives the single combined call; two different blocks switch to
+  a two-call flow (cheap verdict model, separate handoff writer). Unset keeps
+  `auxiliary.compression`.
+- Both calls go through the same host-owned plugin LLM facade: Hermes resolves,
+  authenticates and retries; the plugin still has no HTTP client and no key access.
+- Config validation: malformed blocks (unknown key, provider without model, wrong
+  type, bad `api_key_env`/`base_url`) raise at load; an unknown provider or an
+  ungranted route logs the exact key to add and falls back to the next permitted
+  route.
+
 ## 0.3.0 — 2026-11-06
 
 - **No internal Hermes imports.** The engine no longer subclasses or imports the
